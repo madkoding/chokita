@@ -30,6 +30,7 @@ class SpeechRecognizerThread(threading.Thread):
         self.text_queue = text_queue
         self.ui_queue = ui_queue
         self.stop_event = stop_event
+        self._model: Model | None = None
 
     def _notify(self, state: str, message: str) -> None:
         self.ui_queue.put({"type": "state", "state": state, "message": message})
@@ -41,14 +42,15 @@ class SpeechRecognizerThread(threading.Thread):
             except Exception:
                 LOGGER.exception("STT thread failure; retrying")
                 self._notify("ERROR", "Error de audio, reintentando...")
-                time.sleep(1.5)
+                time.sleep(SETTINGS.stt_retry_delay_seconds)
 
     def _run_once(self) -> None:
         if not SETTINGS.vosk_model_path.exists():
             raise FileNotFoundError(f"Vosk model not found: {SETTINGS.vosk_model_path}")
 
-        model = Model(str(SETTINGS.vosk_model_path))
-        recognizer = KaldiRecognizer(model, SETTINGS.sample_rate_hz)
+        if self._model is None:
+            self._model = Model(str(SETTINGS.vosk_model_path))
+        recognizer = KaldiRecognizer(self._model, SETTINGS.sample_rate_hz)
         mic = pyaudio.PyAudio()
         stream = mic.open(
             format=pyaudio.paInt16,

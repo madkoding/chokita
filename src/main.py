@@ -9,6 +9,7 @@ import threading
 from typing import Any
 
 from src.audio import SpeechRecognizerThread
+from src.config import SETTINGS
 from src.llm import OllamaClient
 from src.tts import PiperTTS
 from src.ui import AssistantUI
@@ -28,6 +29,7 @@ def assistant_loop(
 ) -> None:
     llm = OllamaClient()
     tts = PiperTTS()
+    face_auth: FaceAuthenticator | None = None
 
     while not stop_event.is_set():
         try:
@@ -37,7 +39,13 @@ def assistant_loop(
 
         try:
             ui_queue.put({"type": "state", "state": "THINKING", "message": "Validando rostro..."})
-            face = FaceAuthenticator().authenticate()
+            if face_auth is None:
+                face_auth = FaceAuthenticator()
+            try:
+                face = face_auth.authenticate()
+            except Exception:
+                face_auth = None
+                raise
             if not face.authorized:
                 msg = "Rostro no autorizado. No responderé a esta solicitud."
                 ui_queue.put({"type": "state", "state": "ERROR", "message": msg})
@@ -83,8 +91,8 @@ def main() -> None:
         ui.run()
     finally:
         stop_event.set()
-        stt_thread.join(timeout=2)
-        worker_thread.join(timeout=2)
+        stt_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
+        worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
 
 
 if __name__ == "__main__":

@@ -31,11 +31,14 @@ def build_model(dataset_dir: Path, output_model: Path, labels_path: Path) -> Non
             image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
             if image is None:
                 continue
-            faces = cascade.detectMultiScale(image, scaleFactor=1.2, minNeighbors=5)
+            faces = cascade.detectMultiScale(
+                image,
+                scaleFactor=SETTINGS.face_detect_scale_factor,
+                minNeighbors=SETTINGS.face_detect_min_neighbors,
+            )
             for (x, y, w, h) in faces:
                 images.append(image[y : y + h, x : x + w])
                 labels.append(label_id)
-                break
 
     if not images:
         raise RuntimeError("No faces detected in dataset")
@@ -46,9 +49,9 @@ def build_model(dataset_dir: Path, output_model: Path, labels_path: Path) -> Non
     output_model.parent.mkdir(parents=True, exist_ok=True)
     recognizer.save(str(output_model))
 
-    inverse_labels = {str(v): k for k, v in label_map.items()}
+    label_id_to_name = {str(v): k for k, v in label_map.items()}
     labels_path.parent.mkdir(parents=True, exist_ok=True)
-    labels_path.write_text(json.dumps(inverse_labels, indent=2, ensure_ascii=False), encoding="utf-8")
+    labels_path.write_text(json.dumps(label_id_to_name, indent=2, ensure_ascii=False), encoding="utf-8")
     LOGGER.info("Model saved to %s", output_model)
     LOGGER.info("Labels saved to %s", labels_path)
 

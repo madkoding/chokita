@@ -51,4 +51,4 @@ class OllamaClient:
             if attempt < self.retries:
                 time.sleep(self.retry_delay_seconds)
 
-        return "No pude contactar al modelo local en este momento."
+        return SETTINGS.ollama_fallback_message

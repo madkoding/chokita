@@ -5,7 +5,7 @@ from src.llm import OllamaClient
 
 class DummyResponse:
     def raise_for_status(self) -> None:
-        return None
+        pass
 
     def json(self) -> dict:
         return {"message": {"content": "respuesta"}}

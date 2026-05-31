@@ -91,6 +91,7 @@ docker compose up --build --force-recreate
 - `FACE_MODEL_PATH`
 - `FACE_LABELS_PATH`
 - `PLAYBACK_COMMAND` (`aplay` o `ffplay`)
+- `USER_ID` / `GROUP_ID` para mapear el usuario del host en `docker-compose.yml`
 
 ## Desarrollo y pruebas
 

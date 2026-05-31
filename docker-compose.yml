@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     image: chokita:latest
     container_name: chokita
-    user: "1000:1000"
+    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     environment:
       DISPLAY: ${DISPLAY:-:0}
       XAUTHORITY: ${XAUTHORITY:-/tmp/.docker.xauth}

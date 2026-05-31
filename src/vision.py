@@ -48,13 +48,17 @@ class FaceAuthenticator:
             raise RuntimeError("Cannot open camera")
 
         try:
-            for _ in range(20):
+            for _ in range(SETTINGS.face_detection_max_frames):
                 ok, frame = cap.read()
                 if not ok:
                     continue
 
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = self._cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=5)
+                faces = self._cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=SETTINGS.face_detect_scale_factor,
+                    minNeighbors=SETTINGS.face_detect_min_neighbors,
+                )
                 for (x, y, w, h) in faces:
                     roi = gray[y : y + h, x : x + w]
                     face_id, confidence = self._recognizer.predict(roi)
@@ -62,6 +66,10 @@ class FaceAuthenticator:
                     authorized = confidence <= SETTINGS.face_confidence_threshold
                     return FaceResult(authorized=authorized, label=identity, confidence=float(confidence))
 
-            return FaceResult(authorized=False, label="unknown", confidence=999.0)
+            return FaceResult(
+                authorized=False,
+                label="unknown",
+                confidence=SETTINGS.face_unknown_confidence,
+            )
         finally:
             cap.release()
