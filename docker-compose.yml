@@ -1,0 +1,32 @@
+services:
+  chokita:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chokita:latest
+    container_name: chokita
+    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: ${XAUTHORITY:-/tmp/.docker.xauth}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      PIPER_MODEL_PATH: ${PIPER_MODEL_PATH:-/app/models/es_ES-mls_10246-medium.onnx}
+      PIPER_CONFIG_PATH: ${PIPER_CONFIG_PATH:-/app/models/es_ES-mls_10246-medium.onnx.json}
+      FACE_MODEL_PATH: ${FACE_MODEL_PATH:-/app/models/lbph_model.yml}
+      FACE_LABELS_PATH: ${FACE_LABELS_PATH:-/app/models/face_labels.json}
+      VOSK_MODEL_PATH: ${VOSK_MODEL_PATH:-/app/models/vosk-model-small-es-0.42}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${XAUTHORITY:-/tmp/.docker.xauth}:${XAUTHORITY:-/tmp/.docker.xauth}:ro
+      - ./models:/app/models
+      - /dev/shm:/dev/shm
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/snd:/dev/snd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
