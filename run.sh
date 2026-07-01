@@ -7,7 +7,7 @@ sudo apt-get install -y -qq portaudio19-dev libasound2-dev build-essential unzip
 [ -d .venv ] || python3 -m venv .venv
 .venv/bin/pip install -q -r requirements.txt
 
-if ! [ -f models/es_ES-davefx-medium.onnx ] || ! [ -d models/vosk-model-small-es-0.42 ]; then
+if ! [ -f models/es_ES-sharvard-medium.onnx ] || ! [ -d models/vosk-model-small-es-0.42 ]; then
     bash scripts/download_models.sh
 fi
 
