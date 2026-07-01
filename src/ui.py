@@ -117,6 +117,24 @@ class ResponseBubble(Static):
         return prefix + body
 
 
+class AudioLevel(Static):
+    level: reactive[int] = reactive(0)
+
+    def render(self) -> Text:
+        bars = "▁▂▃▄▅▆▇█"
+        idx = min(self.level * 8 // 20, 7) if self.level > 0 else 0
+        bar = bars[idx] * 10
+        if self.level == 0:
+            color = "#565f89"
+        elif self.level < 15:
+            color = GREEN
+        elif self.level < 18:
+            color = YELLOW
+        else:
+            color = RED
+        return Text(f"🎤 {bar}", style=color)
+
+
 class _PasteAwareInput(Input):
     PASTE_THRESHOLD = 200
 
@@ -191,6 +209,11 @@ class FaceApp(App):
         border: solid {BORDER};
     }}
 
+    #audio-level {{
+        height: 1;
+        margin: 0 0 1 0;
+    }}
+
     #chat-panel {{
         width: 1fr;
         height: 1fr;
@@ -246,6 +269,7 @@ class FaceApp(App):
             with Static(id="status-row"):
                 yield StatusPill(id="status-pill")
             yield TokenBar(id="token-bar")
+            yield AudioLevel(id="audio-level")
             yield ResponseBubble(id="response-bubble")
         with Vertical(id="right-panel"):
             with Static(id="chat-panel"):
@@ -319,6 +343,8 @@ class FaceApp(App):
                         self.query_one("#chat", RichLog).write(msg)
                 elif event_type == "token":
                     self.query_one("#response-bubble", ResponseBubble).message = event.get("content", "")
+                elif event_type == "audio_level":
+                    self.query_one("#audio-level", AudioLevel).level = event.get("level", 0)
                 elif event_type == "shutdown":
                     self.exit(message="bye")
                     return

@@ -204,6 +204,7 @@ def main() -> None:
             stt_thread.start()
         else:
             LOGGER.warning("Micrófono no detectado. Modo solo texto.")
+            ui_queue.put({"type": "log", "message": "🔇 Micrófono no detectado. Modo solo texto."})
 
     threading.Thread(target=_start_stt, daemon=True, name="stt-launcher").start()
 

@@ -4,7 +4,7 @@ from src.config import SETTINGS
 
 def test_defaults():
     assert SETTINGS.ollama_base_url == "http://localhost:11434"
-    assert SETTINGS.ollama_model == "ornith:9b"
+    assert SETTINGS.ollama_model == "liquidai/lfm2.5-1.2b-instruct:latest"
     assert SETTINGS.rag_top_k == 6
     assert SETTINGS.history_window == 20
     assert SETTINGS.max_tool_iterations == 5

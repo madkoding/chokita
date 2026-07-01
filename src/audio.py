@@ -6,6 +6,7 @@ import json
 import logging
 import queue
 import re
+import struct
 import threading
 import time
 import unicodedata
@@ -78,9 +79,14 @@ class SpeechRecognizerThread(threading.Thread):
         while not self.stop_event.is_set():
             try:
                 self._run_once()
+            except FileNotFoundError:
+                LOGGER.exception("STT model not found")
+                self.ui_queue.put({"type": "log", "message": f"❌ Modelo Vosk no encontrado en {SETTINGS.vosk_model_path}. Ejecutá: bash scripts/download_models.sh"})
+                return
             except Exception:
                 LOGGER.exception("STT thread failure; retrying")
                 self._notify("ERROR", "Error de audio, reintentando...")
+                self.ui_queue.put({"type": "log", "message": "⚠ Error de STT, reintentando..."})
                 time.sleep(SETTINGS.stt_retry_delay_seconds)
 
     def _run_once(self) -> None:
@@ -133,6 +139,12 @@ class SpeechRecognizerThread(threading.Thread):
         try:
             while not self.stop_event.is_set():
                 chunk = stream.read(SETTINGS.audio_chunk_size, exception_on_overflow=False)
+                count = len(chunk) // 2
+                if count:
+                    shorts = struct.unpack(f"<{count}h", chunk)
+                    rms = (sum(s * s for s in shorts) / count) ** 0.5
+                    level = min(int(rms / 32768 * 20), 20)
+                    self.ui_queue.put({"type": "audio_level", "level": level})
                 if recognizer.AcceptWaveform(chunk):
                     payload = json.loads(recognizer.Result())
                     text = payload.get("text", "").strip()
