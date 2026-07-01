@@ -31,3 +31,11 @@ else
 fi
 
 echo "Modelos listos en $MODELS_DIR/"
+
+echo "Verificando modelo de embeddings..."
+if ! ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
+    echo "Descargando modelo de embeddings (nomic-embed-text)..."
+    ollama pull nomic-embed-text
+else
+    echo "Modelo de embeddings ya existe, saltando."
+fi

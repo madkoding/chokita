@@ -61,6 +61,16 @@ def _smoke_check() -> None:
         print("  ollama serve")
         print(f"  ollama pull {SETTINGS.ollama_model}")
         sys.exit(1)
+    try:
+        import json as _json
+        embed_url = f"{SETTINGS.ollama_base_url}/api/embeddings"
+        data = _json.dumps({"model": SETTINGS.ollama_embed_model, "prompt": "test"}).encode()
+        req = urllib.request.Request(embed_url, data=data, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        print(f"ERROR: Modelo de embeddings '{SETTINGS.ollama_embed_model}' no está cargado.")
+        print(f"  ollama pull {SETTINGS.ollama_embed_model}")
+        sys.exit(1)
 
 
 def assistant_loop(

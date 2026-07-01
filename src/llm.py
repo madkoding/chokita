@@ -160,7 +160,6 @@ class OllamaClient:
                     }
                 )
 
-            messages = self._maybe_compact(messages)
             self._emit_tokens(messages)
 
         messages.append(
