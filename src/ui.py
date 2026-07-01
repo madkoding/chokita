@@ -121,12 +121,12 @@ class AudioLevel(Static):
     level: reactive[int] = reactive(0)
 
     def render(self) -> Text:
-        bars = "▁▂▃▄▅▆▇█"
-        idx = min(self.level * 8 // 20, 7) if self.level > 0 else 0
-        bar = bars[idx] * 10
         if self.level == 0:
-            color = "#565f89"
-        elif self.level < 15:
+            return Text("🎤 ──────────", style="dim #565f89")
+        bars = "▁▂▃▄▅▆▇█"
+        idx = min(self.level * 8 // 20, 7)
+        bar = bars[idx] * 10
+        if self.level < 15:
             color = GREEN
         elif self.level < 18:
             color = YELLOW

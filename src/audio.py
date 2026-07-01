@@ -141,8 +141,10 @@ class SpeechRecognizerThread(threading.Thread):
                 if count:
                     shorts = struct.unpack(f"<{count}h", chunk)
                     rms = (sum(s * s for s in shorts) / count) ** 0.5
-                    level = min(int(rms / 32768 * 20), 20)
+                    level = min(int((rms / 32768) ** 0.5 * 20), 20)
                     self.ui_queue.put({"type": "audio_level", "level": level})
+                    if level > 0:
+                        LOGGER.debug("Audio level: %d (rms: %.0f)", level, rms)
                 if recognizer.AcceptWaveform(chunk):
                     payload = json.loads(recognizer.Result())
                     text = payload.get("text", "").strip()
