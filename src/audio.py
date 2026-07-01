@@ -11,8 +11,6 @@ import time
 import unicodedata
 from typing import Any, Callable
 
-from vosk import KaldiRecognizer, Model
-
 from src.config import SETTINGS
 
 LOGGER = logging.getLogger(__name__)
@@ -89,6 +87,7 @@ class SpeechRecognizerThread(threading.Thread):
             raise FileNotFoundError(f"Vosk model not found: {SETTINGS.vosk_model_path}")
 
         if self._model is None:
+            from vosk import KaldiRecognizer, Model
             import os as _os
             _sv = _os.dup(2)
             _dn = _os.open(_os.devnull, _os.O_WRONLY)
