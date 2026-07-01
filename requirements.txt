@@ -1,4 +1,4 @@
-vosk==0.3.45
+vosk==0.3.44
 PyAudio==0.2.14
 textual>=0.86.0
 piper-tts>=1.0.0
