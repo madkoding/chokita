@@ -15,6 +15,7 @@ LOGGER = logging.getLogger(__name__)
 PLAYBACK_APLAY = "aplay"
 PLAYBACK_PAPLAY = "paplay"
 PLAYBACK_FFPLAY = "ffplay"
+PLAYBACK_AFPLAY = "afplay"
 PLAYBACK_POWERSHELL = "powershell"
 PLAYBACK_AUTO = "auto"
 
@@ -56,6 +57,7 @@ class PiperTTS:
             PLAYBACK_APLAY: [PLAYBACK_APLAY, "-q", str(wav_path)],
             PLAYBACK_PAPLAY: [PLAYBACK_PAPLAY, str(wav_path)],
             PLAYBACK_FFPLAY: [PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)],
+            PLAYBACK_AFPLAY: [PLAYBACK_AFPLAY, str(wav_path)],
         }
         if self.playback_cmd in _CMDS:
             self._run_playback(_CMDS[self.playback_cmd])
@@ -68,6 +70,8 @@ class PiperTTS:
 
         import shutil
         attempts: list[list[str]] = []
+        if shutil.which(PLAYBACK_AFPLAY):
+            attempts.append([PLAYBACK_AFPLAY, str(wav_path)])
         if shutil.which(PLAYBACK_PAPLAY):
             attempts.append([PLAYBACK_PAPLAY, str(wav_path)])
         if shutil.which(PLAYBACK_APLAY):
