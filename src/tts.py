@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 import tempfile
 import threading
+import wave
 from pathlib import Path
+from typing import Any
 
 from src.config import SETTINGS
 
@@ -23,9 +24,15 @@ class PiperTTS:
         self.playback_cmd = SETTINGS.playback_command
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._voice: Any = None
+
+    def _get_voice(self) -> Any:
+        if self._voice is None:
+            from piper import PiperVoice
+            self._voice = PiperVoice.load(str(SETTINGS.piper_model_path))
+        return self._voice
 
     def stop(self) -> None:
-        """Kill any in-flight playback. Safe to call from another thread."""
         with self._lock:
             proc = self._proc
             self._proc = None
@@ -59,6 +66,7 @@ class PiperTTS:
         if self.playback_cmd != PLAYBACK_AUTO:
             raise RuntimeError(f"Unsupported playback command: {self.playback_cmd}")
 
+        import shutil
         attempts: list[list[str]] = []
         if shutil.which(PLAYBACK_PAPLAY):
             attempts.append([PLAYBACK_PAPLAY, str(wav_path)])
@@ -100,8 +108,11 @@ class PiperTTS:
     def speak(self, text: str) -> None:
         fallback = SETTINGS.tts_fallback_stdout
 
-        if fallback and not shutil.which(SETTINGS.piper_bin):
-            print(f"[TTS] {text}", flush=True)
+        try:
+            voice = self._get_voice()
+        except Exception:
+            if fallback:
+                print(f"[TTS] {text}", flush=True)
             return
 
         wav_path: Path | None = None
@@ -109,36 +120,11 @@ class PiperTTS:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 wav_path = Path(tmp.name)
 
-            cmd = [
-                SETTINGS.piper_bin,
-                "--model",
-                str(SETTINGS.piper_model_path),
-                "--config",
-                str(SETTINGS.piper_config_path),
-                "--output_file",
-                str(wav_path),
-            ]
-            if SETTINGS.piper_speaker is not None:
-                cmd += ["--speaker", str(SETTINGS.piper_speaker)]
-            with self._lock:
-                self._proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                proc = self._proc
-            try:
-                proc.communicate(input=text.encode("utf-8"))
-            finally:
-                with self._lock:
-                    if self._proc is proc:
-                        self._proc = None
+            with wave.open(str(wav_path), "wb") as wav_file:
+                voice.synthesize_wav(text, wav_file)
 
             self._play_wav(wav_path)
         except Exception as exc:
-            # ponytail: playback failure shouldn't crash the assistant loop —
-            # the answer text is already shown in the UI via SPEAKING state.
             LOGGER.warning("TTS failure: %s — el texto ya se muestra en la UI", exc)
             if fallback:
                 print(f"[TTS] {text}", flush=True)

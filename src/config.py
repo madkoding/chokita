@@ -23,9 +23,7 @@ class Settings:
     stt_retry_delay_seconds: float = float(os.getenv("STT_RETRY_DELAY_SECONDS", "1.5"))
     wake_command_timeout_seconds: float = float(os.getenv("WAKE_COMMAND_TIMEOUT_SECONDS", "12.0"))
 
-    piper_bin: str = os.getenv("PIPER_BIN", "piper")
     piper_model_path: Path = Path(os.getenv("PIPER_MODEL_PATH", "models/es_ES-sharvard-medium.onnx"))
-    piper_config_path: Path = Path(os.getenv("PIPER_CONFIG_PATH", "models/es_ES-sharvard-medium.onnx.json"))
     piper_speaker: int | None = int(os.getenv("PIPER_SPEAKER", "1")) if os.getenv("PIPER_SPEAKER", "1") != "" else None
     playback_command: str = os.getenv("PLAYBACK_COMMAND", "auto")
     tts_fallback_stdout: bool = os.getenv("TTS_FALLBACK_STDOUT", "1") in ("1", "true", "yes")

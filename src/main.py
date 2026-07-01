@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import queue
-import shutil
 import signal
 import sys
 import threading
@@ -48,9 +47,6 @@ def _smoke_check() -> None:
         print("Ejecutá: bash scripts/download_models.sh")
         sys.exit(1)
     if not SETTINGS.tts_fallback_stdout:
-        if not shutil.which(SETTINGS.piper_bin):
-            print("ERROR: Piper no encontrado en PATH y TTS_FALLBACK_STDOUT=0.")
-            sys.exit(1)
         if not SETTINGS.piper_model_path.exists():
             print(f"ERROR: Modelo de voz Piper no encontrado en {SETTINGS.piper_model_path}")
             print("Ejecutá: bash scripts/download_models.sh")

@@ -9,7 +9,6 @@ services:
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       PIPER_MODEL_PATH: ${PIPER_MODEL_PATH:-/app/models/es_ES-sharvard-medium.onnx}
-      PIPER_CONFIG_PATH: ${PIPER_CONFIG_PATH:-/app/models/es_ES-sharvard-medium.onnx.json}
       VOSK_MODEL_PATH: ${VOSK_MODEL_PATH:-/app/models/vosk-model-small-es-0.42}
     volumes:
       - ./models:/app/models

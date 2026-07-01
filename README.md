@@ -13,7 +13,7 @@ Asistente de IA de escritorio para terminal, diseñado para correr en consola si
 - **REM sleep**: hilo que reindexa el RAG construyendo el árbol RAPTOR cada 30 min de idle.
 - **Tools**: 6 herramientas (read/list/glob/grep/write/bash) sandboxeadas a `CHOKITA_WORKDIR`.
 - **Contexto**: compactación automática al 80% del context window. Extracción de memorias episódicas cada N mensajes.
-- **TTS**: `piper` CLI oficial, con fallback a stdout si el binario no está.
+- **TTS**: `piper-tts` (paquete pip, Python API). Playback via aplay/paplay/ffplay/powershell, con fallback a stdout si no hay reproductor.
 - **TUI**: `textual` con cara de gato animada (parpadeo + boca al hablar), input de texto integrado.
 - **Concurrencia**: comunicación entre hilos solo por `queue.Queue`.
 
@@ -40,7 +40,7 @@ scripts/
 - Python 3.12+
 - Ollama ejecutándose (`ollama serve`)
 - Micrófono (opcional, sin él funciona en modo texto)
-- Piper (opcional, sin él imprime respuestas por stdout)
+- Piper (se instala automáticamente via `pip install piper-tts`)
 
 ## Rápido
 
@@ -74,9 +74,7 @@ docker compose up
 - `WAKE_COMMAND_TIMEOUT_SECONDS` (default: `12.0`)
 
 ### TTS
-- `PIPER_BIN` (default: `piper`)
 - `PIPER_MODEL_PATH`
-- `PIPER_CONFIG_PATH`
 - `PIPER_SPEAKER`
 - `PLAYBACK_COMMAND` (`aplay`, `paplay`, `ffplay`, `powershell`, o `auto`)
 - `TTS_FALLBACK_STDOUT` (`0` para desactivar fallback, default `1`)
