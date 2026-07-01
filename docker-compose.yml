@@ -22,3 +22,9 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://host.docker.internal:11434/api/tags', timeout=3)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

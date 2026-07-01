@@ -17,6 +17,9 @@ class DummyResponse:
     def __exit__(self, *args):
         pass
 
+    def __iter__(self):
+        yield (json.dumps({"message": {"content": self._content}, "done": True}) + "\n").encode()
+
 
 def _make_client() -> OllamaClient:
     memory = Mock()

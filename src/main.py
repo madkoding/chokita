@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import queue
 import shutil
 import signal
@@ -21,7 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("chokita.log"),
+        logging.handlers.RotatingFileHandler("chokita.log", maxBytes=5_242_880, backupCount=2),
     ],
 )
 LOGGER = logging.getLogger(__name__)

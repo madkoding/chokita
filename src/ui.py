@@ -317,6 +317,8 @@ class FaceApp(App):
                         )
                     else:
                         self.query_one("#chat", RichLog).write(msg)
+                elif event_type == "token":
+                    self.query_one("#response-bubble", ResponseBubble).message = event.get("content", "")
                 elif event_type == "shutdown":
                     self.exit(message="bye")
                     return

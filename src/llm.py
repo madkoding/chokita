@@ -123,18 +123,19 @@ class OllamaClient:
 
         self.memory.add_message("user", user_message)
 
-        # Compaction check + token report before each turn.
         messages = self._maybe_compact(messages)
         self._emit_tokens(messages)
 
         for _iter in range(SETTINGS.max_tool_iterations):
-            reply = self._raw_chat(messages)
+            if _iter == 0:
+                reply = self._raw_chat_stream(messages)
+            else:
+                reply = self._raw_chat(messages)
             if reply is None:
                 return SETTINGS.ollama_fallback_message
 
             tool_calls = _TOOL_RE.findall(reply)
             if not tool_calls:
-                # plain answer
                 self.memory.add_message("assistant", reply)
                 self._emit_tokens(messages + [{"role": "assistant", "content": reply}])
                 return reply
@@ -159,11 +160,9 @@ class OllamaClient:
                     }
                 )
 
-            # Re-check compaction mid-tool-loop.
             messages = self._maybe_compact(messages)
             self._emit_tokens(messages)
 
-        # exhausted iterations: ask for a final plain answer
         messages.append(
             {
                 "role": "user",
@@ -280,6 +279,49 @@ class OllamaClient:
                 LOGGER.error("Ollama error: %s", exc)
             except Exception as exc:
                 LOGGER.exception("Unexpected Ollama error: %s", exc)
+
+            if attempt < self.retries:
+                time.sleep(self.retry_delay_seconds)
+        return None
+
+    def _raw_chat_stream(self, messages: list[dict[str, str]]) -> str | None:
+        url = f"{SETTINGS.ollama_base_url.rstrip('/')}{SETTINGS.ollama_chat_path}"
+        payload = {
+            "model": SETTINGS.ollama_model,
+            "stream": True,
+            "keep_alive": SETTINGS.ollama_keep_alive,
+            "messages": messages,
+        }
+        data = json.dumps(payload).encode()
+        for attempt in range(self.retries + 1):
+            try:
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
+                full: list[str] = []
+                buf = ""
+                for line in resp:
+                    line = line.decode().strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    token = chunk.get("message", {}).get("content", "")
+                    full.append(token)
+                    buf += token
+                    if len(buf) >= 20 or chunk.get("done"):
+                        if self.ui_queue:
+                            self.ui_queue.put({"type": "token", "content": buf})
+                        buf = ""
+                    if chunk.get("done"):
+                        break
+                text = "".join(full).strip()
+                if not text:
+                    LOGGER.warning("Ollama returned empty stream (attempt %d/%d)", attempt + 1, self.retries + 1)
+                else:
+                    return text
+            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                LOGGER.error("Ollama stream error: %s", exc)
+            except Exception as exc:
+                LOGGER.exception("Unexpected Ollama stream error: %s", exc)
 
             if attempt < self.retries:
                 time.sleep(self.retry_delay_seconds)
