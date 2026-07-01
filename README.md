@@ -121,3 +121,7 @@ Compilación sintáctica:
 ```bash
 python -m compileall src
 ```
+
+## Licencia
+
+GNU General Public License v3.0 or later. Ver [LICENSE](LICENSE).
