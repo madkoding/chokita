@@ -7,7 +7,7 @@ from typing import Any
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, RichLog, Static
 
@@ -120,11 +120,11 @@ class ResponseBubble(Static):
 class _PasteAwareInput(Input):
     PASTE_THRESHOLD = 200
 
-    def __init__(self, *args: Any, on_big_paste: "Any | None" = None, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, on_big_paste: Any | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._on_big_paste = on_big_paste
 
-    def _on_paste(self, event: "Any") -> None:
+    def _on_paste(self, event: Any) -> None:
         text = getattr(event, "text", "")
         if not text:
             return
@@ -379,7 +379,7 @@ class FaceApp(App):
         except Exception:
             LOGGER.exception("Error mostrando paste chip")
 
-    def on_key(self, event: "Any") -> None:
+    def on_key(self, event: Any) -> None:
         if getattr(event, "key", "") == "escape" and self._pasted_buffer:
             self._pasted_buffer = None
             try:

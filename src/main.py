@@ -49,7 +49,7 @@ def _smoke_check() -> None:
         sys.exit(1)
     if not SETTINGS.tts_fallback_stdout:
         if not shutil.which(SETTINGS.piper_bin):
-            print(f"ERROR: Piper no encontrado en PATH y TTS_FALLBACK_STDOUT=0.")
+            print("ERROR: Piper no encontrado en PATH y TTS_FALLBACK_STDOUT=0.")
             sys.exit(1)
         if not SETTINGS.piper_model_path.exists():
             print(f"ERROR: Modelo de voz Piper no encontrado en {SETTINGS.piper_model_path}")

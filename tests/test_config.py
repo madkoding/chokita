@@ -1,4 +1,3 @@
-import os
 
 from src.config import SETTINGS
 
@@ -25,6 +24,7 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("TTS_FALLBACK_STDOUT", "0")
     monkeypatch.setenv("PLAYBACK_COMMAND", "ffplay")
     import importlib
+
     import src.config
     importlib.reload(src.config)
     s = src.config.SETTINGS

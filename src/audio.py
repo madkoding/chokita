@@ -9,7 +9,8 @@ import re
 import threading
 import time
 import unicodedata
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from src.config import SETTINGS
 
@@ -58,8 +59,8 @@ class SpeechRecognizerThread(threading.Thread):
 
     def __init__(
         self,
-        text_queue: "queue.Queue[str]",
-        ui_queue: "queue.Queue[dict[str, Any]]",
+        text_queue: queue.Queue[str],
+        ui_queue: queue.Queue[dict[str, Any]],
         stop_event: threading.Event,
         on_stop_command: Callable[[], None] | None = None,
     ) -> None:
@@ -68,7 +69,7 @@ class SpeechRecognizerThread(threading.Thread):
         self.ui_queue = ui_queue
         self.stop_event = stop_event
         self.on_stop_command = on_stop_command
-        self._model: Model | None = None
+        self._model: object | None = None
 
     def _notify(self, state: str, message: str) -> None:
         self.ui_queue.put({"type": "state", "state": state, "message": message})
@@ -87,8 +88,9 @@ class SpeechRecognizerThread(threading.Thread):
             raise FileNotFoundError(f"Vosk model not found: {SETTINGS.vosk_model_path}")
 
         if self._model is None:
-            from vosk import KaldiRecognizer, Model
             import os as _os
+
+            from vosk import KaldiRecognizer, Model
             _sv = _os.dup(2)
             _dn = _os.open(_os.devnull, _os.O_WRONLY)
             _os.dup2(_dn, 2)

@@ -10,9 +10,11 @@ summaries themselves are the dream content shown on screen.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
+from typing import Any
 
 from src.config import SETTINGS
 from src.memory import Memory
@@ -38,7 +40,7 @@ class SleepThread(threading.Thread):
         summarize_fn: Callable[[str], str],
         stop_event: threading.Event,
         activity_fn: Callable[[], float],
-        ui_queue: object,
+        ui_queue: queue.Queue[dict[str, Any]],
     ) -> None:
         super().__init__(daemon=True, name="rem-sleep")
         self.memory = memory

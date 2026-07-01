@@ -48,7 +48,7 @@ class OllamaClient:
     def __init__(
         self,
         memory: Memory,
-        ui_queue: "queue.Queue[dict[str, Any]] | None" = None,
+        ui_queue: queue.Queue[dict[str, Any]] | None = None,
         retries: int = 2,
         retry_delay_seconds: float = 0.8,
     ) -> None:

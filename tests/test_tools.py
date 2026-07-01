@@ -1,16 +1,12 @@
-import os
-from pathlib import Path
 
 import pytest
-
-from src import tools
-from src.config import SETTINGS
 
 
 @pytest.fixture(autouse=True)
 def workdir(tmp_path, monkeypatch):
     monkeypatch.setenv("CHOKITA_WORKDIR", str(tmp_path))
     import importlib
+
     import src.config
     importlib.reload(src.config)
     import src.tools as tools_mod

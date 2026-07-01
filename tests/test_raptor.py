@@ -1,9 +1,8 @@
-import os
 from unittest.mock import patch
 
 import pytest
 
-from src.memory import Memory, _kmeans_cosine, _cosine
+from src.memory import _kmeans_cosine
 
 
 @pytest.fixture
@@ -13,6 +12,7 @@ def mem(tmp_path, monkeypatch):
     monkeypatch.setenv("RAPTOR_CLUSTER_K", "3")
     monkeypatch.setenv("RAPTOR_MAX_LEVELS", "3")
     import importlib
+
     import src.config
     importlib.reload(src.config)
     import src.memory as mem_mod

@@ -1,8 +1,9 @@
 # AGENTS.md — chokita
 
 ## Verificación
+- `ruff check src tests && mypy src` — lint + type check obligatorio antes de commit.
 - `python -m compileall src && python -m pytest -q` — check obligatorio antes de commit.
-- 31 tests (audio, llm, memory, raptor, tools, tts).
+- 43 tests (audio, config, llm, memory, raptor, soul, sleep, tools, tts).
 
 ## Decisiones de arquitectura
 - HTTP a Ollama: stdlib `urllib.request` (no `requests`). Sin deps externas para HTTP.

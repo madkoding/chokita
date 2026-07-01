@@ -23,7 +23,7 @@ def _safe(path: Path) -> Path:
     try:
         p.relative_to(SETTINGS.workdir)
     except ValueError:
-        raise PermissionError(f"Fuera del workdir: {p}")
+        raise PermissionError(f"Fuera del workdir: {p}") from None
     return p
 
 
@@ -35,7 +35,7 @@ def _read(path: str, offset: int = 0, limit: int = 200) -> str:
     lines = text.splitlines()
     end = offset + limit
     chunk = lines[offset:end]
-    out = "\n".join(f"{i+1}: {l}" for i, l in enumerate(chunk, start=offset))
+    out = "\n".join(f"{i+1}: {line}" for i, line in enumerate(chunk, start=offset))
     if len(lines) > end:
         out += f"\n... ({len(lines) - end} lineas mas)"
     return out[:MAX_OUTPUT_BYTES]

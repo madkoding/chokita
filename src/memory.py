@@ -83,7 +83,8 @@ class Memory:
                 "INSERT INTO sessions(started_at) VALUES (?)", (time.time(),)
             )
             self._session_id = cur.lastrowid
-            return self._session_id
+            assert cur.lastrowid is not None
+            return cur.lastrowid
 
     def end_session(self) -> None:
         with self._lock:
@@ -121,6 +122,7 @@ class Memory:
                 ),
             )
             self._conn.commit()
+            assert cur.lastrowid is not None
             return cur.lastrowid
 
     def recent_messages(self, limit: int | None = None) -> list[dict[str, Any]]:
@@ -269,6 +271,7 @@ class Memory:
                  json.dumps(member_ids), time.time()),
             )
             self._conn.commit()
+            assert cur.lastrowid is not None
             return cur.lastrowid
 
     def raptor_stats(self) -> dict[str, Any]:
@@ -314,7 +317,7 @@ class Memory:
                 break
             clusters = _kmeans_cosine(current, k)
             parents: list[dict[str, Any]] = []
-            for cluster_idx, members in enumerate(clusters):
+            for _cluster_idx, members in enumerate(clusters):
                 if not members:
                     continue
                 joined = "\n".join(f"- {m['text'][:200]}" for m in members)
@@ -377,7 +380,7 @@ def _split_sections(text: str) -> list[tuple[str, str]]:
 def _cosine(a: list[float], b: list[float]) -> float:
     if len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b))  # noqa: B905
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
@@ -411,10 +414,10 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
                 n = len(clusters[c])
                 centroids[c] = [v / n for v in acc]
     # final assignment
-    clusters: list[list[dict[str, Any]]] = [[] for _ in range(k)]
+    result: list[list[dict[str, Any]]] = [[] for _ in range(k)]
     for i, it in enumerate(items):
         best = max(range(k), key=lambda c: _cosine(embs[i], centroids[c]))
-        clusters[best].append(it)
-    return [c for c in clusters if c]
+        result[best].append(it)
+    return [c for c in result if c]
 
 

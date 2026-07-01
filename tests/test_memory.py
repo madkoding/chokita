@@ -1,12 +1,8 @@
-import json
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from src.memory import Memory, _cosine, _split_sections
+from src.memory import _cosine, _split_sections
 
 
 @pytest.fixture
@@ -15,6 +11,7 @@ def mem(tmp_path, monkeypatch):
     monkeypatch.setenv("OLLAMA_EMBED_DIM", "4")
     # Reload settings so the env vars take effect.
     import importlib
+
     import src.config
     importlib.reload(src.config)
     import src.memory as mem_mod
@@ -26,8 +23,6 @@ def mem(tmp_path, monkeypatch):
 
 
 def _fake_embed(text: str) -> list[float]:
-    # deterministic pseudo-embedding from text length
-    base = len(text) % 4
     return [float((len(text) + i) % 7) for i in range(4)]
 
 
