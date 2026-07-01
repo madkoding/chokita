@@ -1,14 +1,21 @@
-from unittest.mock import Mock
+import json
+from unittest.mock import Mock, patch
 
 from src.llm import OllamaClient
 
 
 class DummyResponse:
-    def raise_for_status(self) -> None:
-        pass
+    def __init__(self, content: str = "respuesta"):
+        self._content = content
 
-    def json(self) -> dict:
-        return {"message": {"content": "respuesta"}}
+    def read(self) -> bytes:
+        return json.dumps({"message": {"content": self._content}}).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
 
 
 def _make_client() -> OllamaClient:
@@ -16,37 +23,28 @@ def _make_client() -> OllamaClient:
     memory.recent_messages.return_value = []
     memory.retrieve.return_value = []
     memory.add_message.return_value = 1
-    # seed_soul must not blow up during __init__
     memory.seed_soul = Mock()
     client = OllamaClient(memory=memory, retries=0)
-    session = Mock()
-    session.post.return_value = DummyResponse()
-    client._session = session
     return client, memory
 
 
-def test_ollama_client_parses_response() -> None:
+@patch("urllib.request.urlopen", return_value=DummyResponse("respuesta"))
+def test_ollama_client_parses_response(_mock_urlopen) -> None:
     client, memory = _make_client()
     out = client.chat("hola")
     assert out == "respuesta"
-    # user message + assistant reply persisted
     roles = [c.args[0] for c in memory.add_message.call_args_list]
     assert "user" in roles and "assistant" in roles
 
 
-def test_ollama_client_executes_tool_call() -> None:
+@patch("urllib.request.urlopen")
+def test_ollama_client_executes_tool_call(mock_urlopen) -> None:
     client, memory = _make_client()
-    # first reply has a tool call, second is plain
-    r1 = DummyResponse()
-    r1.json = lambda: {"message": {"content": 'Veo... <tool>{"name":"list","args":{"path":"."}}</tool>'}}
-    r2 = DummyResponse()
-    r2.json = lambda: {"message": {"content": "listo"}}
-    session = Mock()
-    session.post.side_effect = [r1, r2]
-    client._session = session
+    r1 = DummyResponse('Veo... <tool>{"name":"list","args":{"path":"."}}</tool>')
+    r2 = DummyResponse("listo")
+    mock_urlopen.side_effect = [r1, r2]
     out = client.chat("que hay aca?")
     assert out == "listo"
-    # at least one tool message persisted
     tool_calls = [c for c in memory.add_message.call_args_list if c.kwargs.get("tool_name")]
     assert tool_calls, "esperaba al menos un mensaje de tool"
 

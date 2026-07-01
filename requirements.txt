@@ -1,5 +1,4 @@
 vosk==0.3.45
 PyAudio==0.2.14
-requests==2.32.3
 textual>=0.86.0
 pytest==8.3.3

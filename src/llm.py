@@ -14,10 +14,10 @@ import logging
 import queue
 import re
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
-
-import requests
 
 from src.config import SETTINGS
 from src.memory import Memory
@@ -56,7 +56,6 @@ class OllamaClient:
         self.ui_queue = ui_queue
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
-        self._session = requests.Session()
         self._soul = _load_soul()
         # Seed RAG with SOUL.md sections on first run.
         if self._soul:
@@ -178,8 +177,7 @@ class OllamaClient:
         self._emit_tokens(messages + [{"role": "assistant", "content": reply}])
         return reply
 
-    def chat_raw(self, messages: list[dict[str, str]], tag: str = "chat") -> str:
-        """Public alias for the soul/sleep threads: call the model with arbitrary messages."""
+    def chat_raw(self, messages: list[dict[str, str]]) -> str:
         return self._raw_chat(messages) or ""
 
     def extract_memories(self) -> int:
@@ -244,6 +242,15 @@ class OllamaClient:
         except Exception:
             LOGGER.debug("RAG retrieve failed (embed model?)")
 
+        try:
+            raptor_chunks = self.memory.retrieve_raptor(user_message, top_k=3)
+            if raptor_chunks:
+                parts.append("\n\n## Contexto agregado (RAPTOR)")
+                for c in raptor_chunks:
+                    parts.append(f"[L{c['level']}]: {c['text']}")
+        except Exception:
+            LOGGER.debug("RAPTOR retrieve failed (tree empty or embed model?)")
+
         parts.append("\n\n## Tools disponibles")
         parts.append(tools_system_doc())
         parts.append(TOOL_FORMAT_HINT)
@@ -257,25 +264,20 @@ class OllamaClient:
             "keep_alive": SETTINGS.ollama_keep_alive,
             "messages": messages,
         }
+        data = json.dumps(payload).encode()
         for attempt in range(self.retries + 1):
             try:
-                response = self._session.post(url, json=payload, timeout=SETTINGS.ollama_timeout_seconds)
-                response.raise_for_status()
-                body: dict[str, Any] = response.json()
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
+                body: dict[str, Any] = json.loads(resp.read())
                 msg = body.get("message", {})
                 text = msg.get("content", "").strip()
                 if not text:
-                    # ponytail: empty response is retryable, not a crash.
-                    # Happens with some models when context is edge-case; retry, don't traceback.
                     LOGGER.warning("Ollama returned empty content (attempt %d/%d)", attempt + 1, self.retries + 1)
                 else:
                     return text
-            except requests.Timeout as exc:
-                LOGGER.error("Ollama timeout: %s", exc)
-            except requests.ConnectionError as exc:
-                LOGGER.error("Ollama connection error: %s", exc)
-            except requests.HTTPError as exc:
-                LOGGER.error("Ollama HTTP error: %s", exc)
+            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                LOGGER.error("Ollama error: %s", exc)
             except Exception as exc:
                 LOGGER.exception("Unexpected Ollama error: %s", exc)
 

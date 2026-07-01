@@ -16,10 +16,11 @@ import logging
 import random
 import threading
 import time
-from typing import Any, Callable
+from typing import Callable
 
 from src.config import SETTINGS
 from src.memory import Memory
+from src.sleep import _slice_sleep
 
 LOGGER = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class SoulThread(threading.Thread):
     def __init__(
         self,
         memory: Memory,
-        chat_fn: Callable[[list[dict[str, str]], str], str],
+        chat_fn: Callable[[list[dict[str, str]]], str],
         stop_event: threading.Event,
         activity_fn: Callable[[], float],
     ) -> None:
@@ -91,7 +92,7 @@ class SoulThread(threading.Thread):
             delay = random.uniform(
                 SETTINGS.soul_reflect_min_seconds, SETTINGS.soul_reflect_max_seconds
             )
-            if self._sleep(delay):
+            if _slice_sleep(self.stop_event, delay):
                 break
             if self.stop_event.is_set():
                 break
@@ -99,15 +100,6 @@ class SoulThread(threading.Thread):
                 self._reflect_once()
             except Exception:
                 LOGGER.exception("Soul reflection failed")
-
-    def _sleep(self, seconds: float) -> bool:
-        """Sleep in small slices so stop is responsive. Returns True if stop requested."""
-        end = time.time() + seconds
-        while time.time() < end:
-            if self.stop_event.is_set():
-                return True
-            time.sleep(min(1.0, end - time.time()))
-        return False
 
     def _reflect_once(self) -> None:
         seed = random.choice(_SEEDS)
@@ -120,7 +112,7 @@ class SoulThread(threading.Thread):
                 {"role": "user", "content": context},
             ]
             try:
-                text = self.chat(msgs, "soul").strip()
+                text = self.chat(msgs).strip()
             except Exception:
                 LOGGER.warning("Voice %s raised", voice)
                 return
@@ -141,7 +133,7 @@ class SoulThread(threading.Thread):
             {"role": "user", "content": joined},
         ]
         try:
-            synth = self.chat(synth_msgs, "soul").strip()
+            synth = self.chat(synth_msgs).strip()
         except Exception:
             LOGGER.warning("Synthesis raised")
             return

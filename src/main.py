@@ -26,6 +26,20 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
+_last_activity = time.time()
+_activity_lock = threading.Lock()
+
+
+def _activity_ping() -> None:
+    global _last_activity
+    with _activity_lock:
+        _last_activity = time.time()
+
+
+def _seconds_idle() -> float:
+    with _activity_lock:
+        return time.time() - _last_activity
+
 
 def _smoke_check() -> None:
     if not SETTINGS.vosk_model_path.exists():
@@ -52,28 +66,11 @@ def _smoke_check() -> None:
         sys.exit(1)
 
 
-class ActivityTracker:
-    """Thread-safe 'seconds since last user input' tracker for the soul thread."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._last = time.time()
-
-    def ping(self) -> None:
-        with self._lock:
-            self._last = time.time()
-
-    def seconds_idle(self) -> float:
-        with self._lock:
-            return time.time() - self._last
-
-
 def assistant_loop(
     text_queue: queue.Queue[str],
     ui_queue: queue.Queue[dict[str, Any]],
     stop_event: threading.Event,
     memory: Memory,
-    activity: ActivityTracker,
     abort_event: threading.Event,
     tts: PiperTTS,
 ) -> None:
@@ -85,7 +82,7 @@ def assistant_loop(
         except queue.Empty:
             continue
 
-        activity.ping()
+        _activity_ping()
         abort_event.clear()
         try:
             ui_queue.put({"type": "state", "state": "THINKING", "message": "Consultando LLM..."})
@@ -102,7 +99,7 @@ def assistant_loop(
             if abort_event.is_set():
                 tts.stop()
             ui_queue.put({"type": "state", "state": "IDLE", "message": "Esperando comando..."})
-            activity.ping()  # speaking counts as activity for idle purposes
+            _activity_ping()  # speaking counts as activity for idle purposes
 
             # Long-term memory extraction: every N messages, extract & persist.
             if memory.session_message_count() >= SETTINGS.memory_extract_interval:
@@ -181,7 +178,6 @@ def main() -> None:
     ui_queue: queue.Queue[dict[str, Any]] = queue.Queue()
     stop_event = threading.Event()
     abort_event = threading.Event()
-    activity = ActivityTracker()
     tts = PiperTTS()
 
     def _handle_signal(_sig: int, _frame: Any) -> None:
@@ -216,7 +212,7 @@ def main() -> None:
 
     worker_thread = threading.Thread(
         target=assistant_loop,
-        args=(text_queue, ui_queue, stop_event, memory, activity, abort_event, tts),
+        args=(text_queue, ui_queue, stop_event, memory, abort_event, tts),
         daemon=True,
         name="assistant-loop",
     )
@@ -224,19 +220,15 @@ def main() -> None:
 
     # Soul reflection thread: idle musings on her own personality.
     # Build a lightweight chat fn that calls Ollama directly (no tools, no memory writes).
-    def _soul_chat(messages: list[dict[str, str]], _tag: str = "soul") -> str:
-        # Reuse a throwaway OllamaClient instance pointing at the same memory
-        # but bypassing its tool loop: we just want raw model output.
-        from src.llm import OllamaClient  # local import to avoid cycle at module load
-
+    def _soul_chat(messages: list[dict[str, str]]) -> str:
         client = OllamaClient(memory=memory)
-        return client.chat_raw(messages, "soul")
+        return client.chat_raw(messages)
 
     soul_thread = SoulThread(
         memory=memory,
         chat_fn=_soul_chat,
         stop_event=stop_event,
-        activity_fn=activity.seconds_idle,
+        activity_fn=_seconds_idle,
     )
     soul_thread.start()
     LOGGER.info(
@@ -248,22 +240,19 @@ def main() -> None:
 
     # REM sleep thread: reindexes the RAG (RAPTOR) while idle.
     def _summarize(text: str) -> str:
-        from src.llm import OllamaClient  # local import to avoid cycle
-
         client = OllamaClient(memory=memory)
         return client.chat_raw(
             [
                 {"role": "system", "content": "Resumí los siguientes puntos en 2-3 lineas, en español rioplatense."},
                 {"role": "user", "content": text},
             ],
-            "sleep",
         )
 
     sleep_thread = SleepThread(
         memory=memory,
         summarize_fn=_summarize,
         stop_event=stop_event,
-        activity_fn=activity.seconds_idle,
+        activity_fn=_seconds_idle,
         ui_queue=ui_queue,
     )
     sleep_thread.start()

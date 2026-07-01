@@ -12,12 +12,21 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable
+from typing import Callable
 
 from src.config import SETTINGS
 from src.memory import Memory
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _slice_sleep(stop_event: threading.Event, seconds: float) -> bool:
+    end = time.time() + seconds
+    while time.time() < end:
+        if stop_event.is_set():
+            return True
+        time.sleep(min(1.0, end - time.time()))
+    return False
 
 
 class SleepThread(threading.Thread):
@@ -45,7 +54,7 @@ class SleepThread(threading.Thread):
                 time.sleep(SETTINGS.rem_idle_threshold_seconds)
                 continue
             # Sleep the raptor interval in slices (responsive to stop).
-            if self._sleep(SETTINGS.rem_raptor_interval_seconds):
+            if _slice_sleep(self.stop_event, SETTINGS.rem_raptor_interval_seconds):
                 break
             if self.stop_event.is_set():
                 break
@@ -55,14 +64,6 @@ class SleepThread(threading.Thread):
                 self._dream_once()
             except Exception:
                 LOGGER.exception("REM sleep failed")
-
-    def _sleep(self, seconds: float) -> bool:
-        end = time.time() + seconds
-        while time.time() < end:
-            if self.stop_event.is_set():
-                return True
-            time.sleep(min(1.0, end - time.time()))
-        return False
 
     def _dream_once(self) -> None:
         self._emit_state("SLEEPING", "Zzz... reindexando el alma (RAPTOR)")

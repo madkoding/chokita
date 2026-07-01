@@ -19,8 +19,8 @@ def workdir(tmp_path, monkeypatch):
 
 
 def test_write_read_list(workdir):
-    from src.tools import TOOLS, call_tool
-    assert "read" in TOOLS and "write" in TOOLS and "list" in TOOLS
+    from src.tools import _TOOLS, call_tool
+    assert "read" in _TOOLS and "write" in _TOOLS and "list" in _TOOLS
     out = call_tool("write", {"path": "foo.txt", "content": "hola mundo\nlinea 2"})
     assert "OK" in out
     out = call_tool("read", {"path": "foo.txt"})

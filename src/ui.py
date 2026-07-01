@@ -20,7 +20,6 @@ BG_PANEL = "#1f2335"
 BG_INPUT = "#24283b"
 BORDER = "#2d3548"
 TEXT_PRIMARY = "#c0caf5"
-TEXT_DIM = "#565f89"
 ACCENT = "#7aa2f7"
 ACCENT_DIM = "#3b4261"
 GREEN = "#9ece6a"
@@ -342,14 +341,10 @@ class FaceApp(App):
             self.query_one("#chat", RichLog).write(
                 Text(f"👤 Tú: [📋 texto pegado, {len(full)} caracteres]", style=f"bold {GREEN}")
             )
-            self.query_one("#face", KaomojiFace).state = "THINKING"
-            self.query_one("#status-pill", StatusPill).state = "THINKING"
-            self.query_one("#response-bubble", ResponseBubble).message = "..."
+            self._set_thinking()
             self.text_queue.put(full)
             return
         if typed:
-            # If the submitted text is huge (terminal didn't trigger bracketed paste),
-            # treat it as a paste: don't log the whole thing, show a chip.
             if len(typed) > _PasteAwareInput.PASTE_THRESHOLD:
                 LOGGER.info("Usuario (input largo, %d chars): enviado", len(typed))
                 self.query_one("#chat", RichLog).write(
@@ -360,10 +355,13 @@ class FaceApp(App):
                 self.query_one("#chat", RichLog).write(
                     Text(f"👤 Tú: {typed}", style=f"bold {GREEN}")
                 )
-            self.query_one("#face", KaomojiFace).state = "THINKING"
-            self.query_one("#status-pill", StatusPill).state = "THINKING"
-            self.query_one("#response-bubble", ResponseBubble).message = "..."
+            self._set_thinking()
             self.text_queue.put(typed)
+
+    def _set_thinking(self) -> None:
+        self.query_one("#face", KaomojiFace).state = "THINKING"
+        self.query_one("#status-pill", StatusPill).state = "THINKING"
+        self.query_one("#response-bubble", ResponseBubble).message = "..."
 
     def _handle_big_paste(self, text: str) -> None:
         self._pasted_buffer = text

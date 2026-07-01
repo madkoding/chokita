@@ -5,16 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-KAOMOJIS = {
-    "IDLE": "(=^･ω･^=)",
-    "LISTENING": "(=^･ｪ･^=))ﾉ彡☆",
-    "RECOGNIZED": "(๑˃ᴗ˂)ﻭ",
-    "THINKING": "(・・ ) ?",
-    "SPEAKING": "(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧",
-    "ERROR": "(╥﹏╥)",
-}
-
-
 @dataclass(frozen=True)
 class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -40,7 +30,6 @@ class Settings:
     playback_command: str = os.getenv("PLAYBACK_COMMAND", "auto")
     tts_fallback_stdout: bool = os.getenv("TTS_FALLBACK_STDOUT", "1") in ("1", "true", "yes")
 
-    ui_poll_interval_ms: int = int(os.getenv("UI_POLL_INTERVAL_MS", "40"))
     shutdown_join_timeout_seconds: float = float(os.getenv("SHUTDOWN_JOIN_TIMEOUT_SECONDS", "2"))
 
     # --- Memoria + RAG ---
@@ -50,7 +39,6 @@ class Settings:
     ))
     ollama_embed_path: str = os.getenv("OLLAMA_EMBED_PATH", "/api/embeddings")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-    ollama_embed_dim: int = int(os.getenv("OLLAMA_EMBED_DIM", "768"))
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "6"))
     # Historial de mensajes por sesión (ventana deslizante)
     history_window: int = int(os.getenv("HISTORY_WINDOW", "20"))

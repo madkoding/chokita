@@ -1,6 +1,6 @@
-"""SQLite + WAL persistence: sessions, messages, tool outputs, snapshots, embeddings, RAG.
+"""SQLite + WAL persistence: sessions, messages, embeddings, RAG.
 
-No external deps: sqlite3 (stdlib) + requests (already used) to call Ollama /api/embeddings.
+No external deps: sqlite3 (stdlib) + urllib (stdlib) to call Ollama /api/embeddings.
 Vector search is brute-force cosine over stored embeddings; fine for a personal agent's scale.
 # ponytail: O(n) cosine scan, fine until ~10k chunks; switch to sqlite-vec or FAISS if it grows.
 """
@@ -10,14 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import random
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Iterator
-
-import requests
+import urllib.error
+import urllib.request
+from typing import Any
 
 from src.config import SETTINGS
 
@@ -38,21 +37,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_args TEXT,                  -- JSON
     created_at REAL NOT NULL
 );
-CREATE TABLE IF NOT EXISTS tool_outputs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id INTEGER NOT NULL REFERENCES messages(id),
-    tool_name TEXT NOT NULL,
-    args_json TEXT NOT NULL,
-    result TEXT NOT NULL,
-    created_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES sessions(id),
-    path TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at REAL NOT NULL
-);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,            -- 'soul'|'reflection'|'memory'|'file'
@@ -89,7 +74,6 @@ class Memory:
         self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.executescript(_SCHEMA)
         self._session_id: int | None = None
-        self._http = requests.Session()
 
     # ---- sessions ----
 
@@ -138,15 +122,6 @@ class Memory:
             )
             self._conn.commit()
             return cur.lastrowid
-
-    def add_tool_output(self, message_id: int, tool_name: str, args: dict, result: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO tool_outputs(message_id, tool_name, args_json, result, created_at) "
-                "VALUES (?,?,?,?,?)",
-                (message_id, tool_name, json.dumps(args), result, time.time()),
-            )
-            self._conn.commit()
 
     def recent_messages(self, limit: int | None = None) -> list[dict[str, Any]]:
         limit = limit or SETTINGS.history_window
@@ -221,31 +196,18 @@ class Memory:
             self._conn.commit()
             return deleted
 
-    # ---- snapshots ----
-
-    def snapshot(self, path: str, content: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO snapshots(session_id, path, content, created_at) VALUES (?,?,?,?)",
-                (self._session_id, path, content, time.time()),
-            )
-            self._conn.commit()
-
     # ---- embeddings + RAG ----
 
     def embed(self, text: str) -> list[float]:
         url = f"{SETTINGS.ollama_base_url.rstrip('/')}{SETTINGS.ollama_embed_path}"
-        resp = self._http.post(
-            url,
-            json={
-                "model": SETTINGS.ollama_embed_model,
-                "prompt": text,
-                "keep_alive": SETTINGS.ollama_keep_alive,
-            },
-            timeout=SETTINGS.ollama_timeout_seconds,
-        )
-        resp.raise_for_status()
-        return resp.json()["embedding"]
+        data = json.dumps({
+            "model": SETTINGS.ollama_embed_model,
+            "prompt": text,
+            "keep_alive": SETTINGS.ollama_keep_alive,
+        }).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
+        return json.loads(resp.read())["embedding"]
 
     def add_chunk(self, source: str, kind: str, text: str) -> None:
         emb = self.embed(text)
@@ -290,19 +252,6 @@ class Memory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s[1] for s in scored[:top_k]]
 
-    def all_chunks(self, source: str | None = None) -> list[dict[str, Any]]:
-        with self._lock:
-            if source:
-                rows = self._conn.execute(
-                    "SELECT id, source, kind, text, created_at FROM chunks WHERE source=? ORDER BY id",
-                    (source,),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT id, source, kind, text, created_at FROM chunks ORDER BY id"
-                ).fetchall()
-        return [{"id": r[0], "source": r[1], "kind": r[2], "text": r[3], "created_at": r[4]} for r in rows]
-
     # ---- RAPTOR: hierarchical clustering + summarization ----
 
     def clear_raptor(self) -> None:
@@ -321,17 +270,6 @@ class Memory:
             )
             self._conn.commit()
             return cur.lastrowid
-
-    def _raptor_all_at_level(self, level: int) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, text, embedding, member_ids FROM raptor WHERE level=? ORDER BY id",
-                (level,),
-            ).fetchall()
-        return [
-            {"id": r[0], "text": r[1], "embedding": json.loads(r[2]), "member_ids": json.loads(r[3])}
-            for r in rows
-        ]
 
     def raptor_stats(self) -> dict[str, Any]:
         with self._lock:
@@ -399,7 +337,6 @@ class Memory:
         return log
 
     def retrieve_raptor(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
-        """Retrieve from RAPTOR tree: search across all levels, return top summaries."""
         top_k = top_k or SETTINGS.rag_top_k
         q_emb = self.embed(query)
         with self._lock:
@@ -452,15 +389,12 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
     """Stdlib k-means with cosine distance. items must have 'embedding' (list[float]).
     # ponytail: random init, fixed iters, no convergence check; good enough for RAPTOR clustering.
     """
-    import random
-
     if k <= 0 or not items:
         return [items] if items else []
     embs = [it["embedding"] for it in items]
     # init: pick k random distinct items as centroids
     k = min(k, len(items))
     centroids = [random.choice(embs) for _ in range(k)]
-    # guard against duplicates by re-sampling if all identical
     for _ in range(iters):
         clusters: list[list[int]] = [[] for _ in range(k)]
         for i, e in enumerate(embs):
@@ -484,12 +418,3 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
     return [c for c in clusters if c]
 
 
-@contextmanager
-def memory_scope() -> Iterator[Memory]:
-    m = Memory()
-    m.start_session()
-    try:
-        yield m
-    finally:
-        m.end_session()
-        m.close()

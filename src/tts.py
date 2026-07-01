@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import subprocess
 import tempfile
@@ -9,8 +8,6 @@ import threading
 from pathlib import Path
 
 from src.config import SETTINGS
-
-DEVNULL = subprocess.DEVNULL
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,9 +36,8 @@ class PiperTTS:
                 pass
 
     def _run_playback(self, args: list[str]) -> None:
-        """Run a playback subprocess, stored so stop() can kill it."""
         with self._lock:
-            self._proc = subprocess.Popen(args, stdout=DEVNULL, stderr=DEVNULL)
+            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             proc = self._proc
         proc.wait()
         with self._lock:
@@ -49,35 +45,27 @@ class PiperTTS:
                 self._proc = None
 
     def _play_wav(self, wav_path: Path) -> None:
-        if self.playback_cmd == PLAYBACK_APLAY:
-            self._run_playback([PLAYBACK_APLAY, "-q", str(wav_path)])
-            return
-        if self.playback_cmd == PLAYBACK_PAPLAY:
-            self._run_playback([PLAYBACK_PAPLAY, str(wav_path)])
-            return
-        if self.playback_cmd == PLAYBACK_FFPLAY:
-            self._run_playback(
-                [PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)]
-            )
+        _CMDS = {
+            PLAYBACK_APLAY: [PLAYBACK_APLAY, "-q", str(wav_path)],
+            PLAYBACK_PAPLAY: [PLAYBACK_PAPLAY, str(wav_path)],
+            PLAYBACK_FFPLAY: [PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)],
+        }
+        if self.playback_cmd in _CMDS:
+            self._run_playback(_CMDS[self.playback_cmd])
             return
         if self.playback_cmd == PLAYBACK_POWERSHELL:
             self._play_via_powershell(wav_path)
             return
-
         if self.playback_cmd != PLAYBACK_AUTO:
             raise RuntimeError(f"Unsupported playback command: {self.playback_cmd}")
 
         attempts: list[list[str]] = []
-        # ponytail: WSLg exposes audio via PulseAudio, not ALSA — aplay fails with
-        # "no soundcards found" there. Prefer paplay when present.
         if shutil.which(PLAYBACK_PAPLAY):
             attempts.append([PLAYBACK_PAPLAY, str(wav_path)])
         if shutil.which(PLAYBACK_APLAY):
             attempts.append([PLAYBACK_APLAY, "-q", str(wav_path)])
         if shutil.which(PLAYBACK_FFPLAY):
-            attempts.append(
-                [PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)]
-            )
+            attempts.append([PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)])
         if shutil.which("powershell.exe"):
             attempts.append(["__powershell__", str(wav_path)])
 
@@ -102,7 +90,7 @@ class PiperTTS:
 
     def _play_via_powershell(self, wav_path: Path) -> None:
         win_path = subprocess.check_output(
-            ["wslpath", "-w", str(wav_path)], stderr=DEVNULL
+            ["wslpath", "-w", str(wav_path)], stderr=subprocess.DEVNULL
         ).decode().strip()
         self._run_playback(
             ["powershell.exe", "-c",
@@ -136,8 +124,8 @@ class PiperTTS:
                 self._proc = subprocess.Popen(
                     cmd,
                     stdin=subprocess.PIPE,
-                    stdout=DEVNULL,
-                    stderr=DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 proc = self._proc
             try:
