@@ -210,7 +210,7 @@ class FaceApp(App):
         height: 5;
         content-align: center middle;
         background: {BG_PANEL};
-        border: rounded {BORDER};
+        border: round {BORDER};
         margin: 0 0 1 0;
     }}
 
@@ -237,7 +237,7 @@ class FaceApp(App):
         padding: 0 1;
         margin: 0 0 1 0;
         background: {BG_PANEL};
-        border: rounded {BORDER};
+        border: round {BORDER};
     }}
 
     #audio-level {{
