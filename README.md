@@ -61,7 +61,7 @@ docker compose up
 
 ### Ollama
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` (default: `ornith:9b`)
+- `OLLAMA_MODEL` (default: `liquidai/lfm2.5-1.2b-instruct:latest`)
 - `OLLAMA_TIMEOUT_SECONDS` (default: `15`)
 - `OLLAMA_KEEP_ALIVE` (default: `-1`)
 - `OLLAMA_EMBED_MODEL` (default: `nomic-embed-text`)

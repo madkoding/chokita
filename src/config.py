@@ -9,7 +9,7 @@ from pathlib import Path
 class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_chat_path: str = os.getenv("OLLAMA_CHAT_PATH", "/api/chat")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "ornith:9b")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "liquidai/lfm2.5-1.2b-instruct:latest")
     ollama_timeout_seconds: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "15"))
     ollama_fallback_message: str = os.getenv(
         "OLLAMA_FALLBACK_MESSAGE",
