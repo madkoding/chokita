@@ -70,6 +70,7 @@ def assistant_loop(
     memory: Memory,
     abort_event: threading.Event,
     tts: PiperTTS,
+    mute_event: threading.Event,
 ) -> None:
     llm = OllamaClient(memory=memory, ui_queue=ui_queue)
 
@@ -92,7 +93,9 @@ def assistant_loop(
                 continue
 
             ui_queue.put({"type": "state", "state": "SPEAKING", "message": answer})
+            mute_event.set()
             tts.speak(answer)
+            mute_event.clear()
             if abort_event.is_set():
                 tts.stop()
             ui_queue.put({"type": "state", "state": "IDLE", "message": "Esperando comando..."})
@@ -175,6 +178,7 @@ def main() -> None:
     ui_queue: queue.Queue[dict[str, Any]] = queue.Queue()
     stop_event = threading.Event()
     abort_event = threading.Event()
+    mute_event = threading.Event()
     tts = PiperTTS()
 
     def _handle_signal(_sig: int, _frame: Any) -> None:
@@ -200,6 +204,7 @@ def main() -> None:
                 ui_queue=ui_queue,
                 stop_event=stop_event,
                 on_stop_command=_on_stop_command,
+                mute_event=mute_event,
             )
             stt_thread.start()
         else:
@@ -210,7 +215,7 @@ def main() -> None:
 
     worker_thread = threading.Thread(
         target=assistant_loop,
-        args=(text_queue, ui_queue, stop_event, memory, abort_event, tts),
+        args=(text_queue, ui_queue, stop_event, memory, abort_event, tts, mute_event),
         daemon=True,
         name="assistant-loop",
     )

@@ -62,12 +62,14 @@ class SpeechRecognizerThread(threading.Thread):
         ui_queue: queue.Queue[dict[str, Any]],
         stop_event: threading.Event,
         on_stop_command: Callable[[], None] | None = None,
+        mute_event: threading.Event | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.text_queue = text_queue
         self.ui_queue = ui_queue
         self.stop_event = stop_event
         self.on_stop_command = on_stop_command
+        self.mute_event = mute_event or threading.Event()
         self._model: object | None = None
 
     def _notify(self, state: str, message: str) -> None:
@@ -137,6 +139,9 @@ class SpeechRecognizerThread(threading.Thread):
         try:
             while not self.stop_event.is_set():
                 chunk = stream.read(SETTINGS.audio_chunk_size, exception_on_overflow=False)
+                if self.mute_event.is_set():
+                    self.ui_queue.put({"type": "audio_level", "level": 0})
+                    continue
                 count = len(chunk) // 2
                 if count:
                     shorts = struct.unpack(f"<{count}h", chunk)
