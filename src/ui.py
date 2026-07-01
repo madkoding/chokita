@@ -29,14 +29,42 @@ MAGENTA = "#bb9af7"
 CYAN = "#7dcfff"
 VIOLET = "#9d7cd8"
 
-KAOMOJI = {
-    "IDLE":       "(=^･ω･^=)",
-    "LISTENING":  "(=^･ｪ･^=))ﾉ彡☆",
-    "THINKING":   "(・・ ) ?",
-    "SPEAKING":   "(ﾉ◕ヮ◕)ﾉ*:･ﾟ✧",
-    "RECOGNIZED": "(๑˃ᴗ˂)ﻭ",
-    "ERROR":      "(╥﹏╥)",
-    "SLEEPING":   "(=˘ω˘=) zzZ",
+CAT_ART = {
+    "IDLE": [
+        r" /\_/\ ",
+        r"( o.o )",
+        r" > ^ < ",
+    ],
+    "LISTENING": [
+        r" /\_/\ *",
+        r"( @.@ )~",
+        r" > w < ",
+    ],
+    "THINKING": [
+        r" /\_/\ ",
+        r"( o.o )?",
+        r" > ? < ",
+    ],
+    "SPEAKING": [
+        r" /\_/\ ~",
+        r"( >w< )",
+        r" > w < ",
+    ],
+    "RECOGNIZED": [
+        r" /\_/\ *",
+        r"( ^.^ )b",
+        r" > w < ",
+    ],
+    "ERROR": [
+        r" /\_/\ ",
+        r"( ;.; )",
+        r" > _ < ",
+    ],
+    "SLEEPING": [
+        r" /\_/\ zzz",
+        r"( -.- )~",
+        r" > ~ < ",
+    ],
 }
 
 STATE_LABEL = {
@@ -66,13 +94,13 @@ class KaomojiFace(Static):
     mouth_open: reactive[bool] = reactive(False)
 
     def render(self) -> Text:
-        base = KAOMOJI.get(self.state, KAOMOJI["IDLE"])
-        if self.mouth_open and self.state == "SPEAKING":
-            base = "(OwO)"
+        lines = CAT_ART.get(self.state, CAT_ART["IDLE"])
         if self.blink:
-            base = base.replace("w", "_").replace("^", "-").replace("o", "-").replace("O", "-")
+            lines = [line.replace("o.o", "-.-").replace("@.@", "-.-").replace("^.^", "-.-").replace(";.;", "-.-") for line in lines]
+        if self.mouth_open and self.state == "SPEAKING":
+            lines = [line.replace(">w<", ">o<") for line in lines]
         color = STATE_COLORS.get(self.state, CYAN)
-        return Text(base, style=f"bold {color}")
+        return Text("\n".join(lines), style=f"bold {color}")
 
 
 class StatusPill(Static):
@@ -178,7 +206,7 @@ class FaceApp(App):
     }}
 
     #face-box {{
-        height: 3;
+        height: 5;
         content-align: center middle;
         background: {BG_PANEL};
         border: solid {BORDER};
