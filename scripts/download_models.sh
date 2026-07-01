@@ -4,8 +4,8 @@ set -euo pipefail
 MODELS_DIR="${1:-models}"
 mkdir -p "$MODELS_DIR"
 
-VOSK_URL="https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"
-VOSK_DIR="$MODELS_DIR/vosk-model-small-es-0.42"
+VOSK_URL="https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
+VOSK_DIR="$MODELS_DIR/vosk-model-es-0.42"
 if [ ! -d "$VOSK_DIR" ]; then
     echo "Descargando modelo Vosk..."
     curl -L "$VOSK_URL" -o /tmp/vosk.zip

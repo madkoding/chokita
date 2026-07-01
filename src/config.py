@@ -10,14 +10,14 @@ class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_chat_path: str = os.getenv("OLLAMA_CHAT_PATH", "/api/chat")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "liquidai/lfm2.5-1.2b-instruct:latest")
-    ollama_timeout_seconds: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "15"))
+    ollama_timeout_seconds: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
     ollama_fallback_message: str = os.getenv(
         "OLLAMA_FALLBACK_MESSAGE",
         "No pude contactar al modelo local en este momento.",
     )
     ollama_keep_alive: int = int(os.getenv("OLLAMA_KEEP_ALIVE", "-1"))
 
-    vosk_model_path: Path = Path(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-small-es-0.42"))
+    vosk_model_path: Path = Path(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-es-0.42"))
     sample_rate_hz: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
     audio_chunk_size: int = int(os.getenv("AUDIO_CHUNK_SIZE", "4000"))
     stt_retry_delay_seconds: float = float(os.getenv("STT_RETRY_DELAY_SECONDS", "1.5"))

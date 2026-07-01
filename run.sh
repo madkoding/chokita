@@ -18,7 +18,7 @@ command -v python3.12 >/dev/null && PYTHON="python3.12"
 [ -d .venv ] || $PYTHON -m venv .venv
 .venv/bin/pip install -q -r requirements.txt
 
-if ! [ -f models/es_ES-sharvard-medium.onnx ] || ! [ -d models/vosk-model-small-es-0.42 ]; then
+if ! [ -f models/es_ES-sharvard-medium.onnx ] || ! [ -d models/vosk-model-es-0.42 ]; then
     bash scripts/download_models.sh
 fi
 

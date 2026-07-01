@@ -18,10 +18,8 @@ from src.config import SETTINGS
 LOGGER = logging.getLogger(__name__)
 
 # Wake word: "chokita" anywhere in the utterance.
-# ponytail: Vosk small-es (50MB) mishears "chokita" as chiquita/choquita/yo quita/
-# chaqueta/jaquita/quita/chiqui/etc, and rarely places it at the start. Match
-# anywhere in the text with a broad alias set; if a bigger Vosk model
-# (vosk-model-es-0.42, ~1.3GB) ever lands, tighten this back to ^start anchor.
+# ponytail: Vosk es-0.42 (1.4GB) is accurate enough that the wake word
+# should be recognized cleanly. Aliases kept as fallback for edge cases.
 _WAKE_RE = re.compile(
     r"\b(chokita|choquita|chiquita|chiquitita|chaquita|jaquita|chocita|choki|chiqui)\b\s*(.*)",
     re.DOTALL,

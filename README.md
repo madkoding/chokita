@@ -41,6 +41,7 @@ scripts/
 - Ollama ejecutándose (`ollama serve`)
 - Micrófono (opcional, sin él funciona en modo texto)
 - Piper (se instala automáticamente via `pip install piper-tts`)
+- Modelo Vosk español (~1.4GB, se descarga automáticamente con `bash scripts/download_models.sh`)
 
 ## Rápido
 
