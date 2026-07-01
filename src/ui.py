@@ -195,7 +195,7 @@ class FaceApp(App):
         dock: left;
         background: {BG_DARK};
         border-right: solid {BORDER};
-        padding: 1 1;
+        padding: 1 1 0 1;
         layout: vertical;
     }}
 
@@ -203,13 +203,14 @@ class FaceApp(App):
         width: 1fr;
         layout: vertical;
         background: {BG};
+        padding: 1 0 0 0;
     }}
 
     #face-box {{
         height: 5;
         content-align: center middle;
         background: {BG_PANEL};
-        border: solid {BORDER};
+        border: rounded {BORDER};
         margin: 0 0 1 0;
     }}
 
@@ -217,7 +218,7 @@ class FaceApp(App):
         text-align: center;
     }}
 
-    #status-row {{
+    #status-pill {{
         height: 1;
         content-align: center middle;
         margin: 0 0 1 0;
@@ -225,7 +226,9 @@ class FaceApp(App):
 
     #token-bar {{
         height: 1;
-        margin: 0 0 1 0;
+        margin: 1 0 1 0;
+        border-top: solid {BORDER};
+        padding-top: 1;
     }}
 
     #response-bubble {{
@@ -234,7 +237,7 @@ class FaceApp(App):
         padding: 0 1;
         margin: 0 0 1 0;
         background: {BG_PANEL};
-        border: solid {BORDER};
+        border: rounded {BORDER};
     }}
 
     #audio-level {{
@@ -242,34 +245,18 @@ class FaceApp(App):
         margin: 0 0 1 0;
     }}
 
-    #chat-panel {{
-        width: 1fr;
-        height: 1fr;
-        padding: 0 1;
-        background: {BG};
-        border-bottom: solid {BORDER};
-    }}
-
     #chat {{
         width: 1fr;
         height: 1fr;
         border: none;
         background: {BG};
-        padding: 0;
-    }}
-
-    #bottom-bar {{
-        height: auto;
-        dock: bottom;
-        background: {BG_DARK};
-        border-top: solid {BORDER};
-        padding: 0;
+        padding: 0 1;
+        overflow: hidden auto;
     }}
 
     #input {{
-        dock: bottom;
         height: 3;
-        margin: 0;
+        margin: 1 1 0 1;
         border: solid {ACCENT_DIM};
         background: {BG_INPUT};
         padding: 0 1;
@@ -294,15 +281,13 @@ class FaceApp(App):
         with Vertical(id="left-panel"):
             with Static(id="face-box"):
                 yield KaomojiFace(id="face")
-            with Static(id="status-row"):
-                yield StatusPill(id="status-pill")
+            yield StatusPill(id="status-pill")
             yield TokenBar(id="token-bar")
             yield AudioLevel(id="audio-level")
             yield ResponseBubble(id="response-bubble")
         with Vertical(id="right-panel"):
-            with Static(id="chat-panel"):
-                yield RichLog(id="chat", highlight=True, markup=True, wrap=True,
-                              auto_scroll=True)
+            yield RichLog(id="chat", highlight=True, markup=True, wrap=True,
+                          auto_scroll=True)
             yield _PasteAwareInput(
                 id="input",
                 on_big_paste=self._handle_big_paste,
