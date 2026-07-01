@@ -38,7 +38,7 @@ class SleepThread(threading.Thread):
         summarize_fn: Callable[[str], str],
         stop_event: threading.Event,
         activity_fn: Callable[[], float],
-        ui_queue: "Any",
+        ui_queue: object,
     ) -> None:
         super().__init__(daemon=True, name="rem-sleep")
         self.memory = memory
