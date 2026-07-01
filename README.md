@@ -37,7 +37,7 @@ scripts/
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.12+
 - Ollama ejecutándose (`ollama serve`)
 - Micrófono (opcional, sin él funciona en modo texto)
 - Piper (opcional, sin él imprime respuestas por stdout)
