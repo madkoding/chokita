@@ -1,14 +1,13 @@
 # chokita
 
-Asistente de IA de escritorio para hardware limitado (netbooks antiguas), diseñado para Ubuntu Server/Ubuntu WSL con Docker.
+Asistente de IA de escritorio para terminal, diseñado para correr en consola sin entorno gráfico.
 
 ## Arquitectura
 
-- **STT**: `vosk` + `pyaudio` en hilo dedicado.
-- **Reconocimiento facial**: `opencv-contrib-python` con `cv2.face.LBPHFaceRecognizer_create()` + Haar cascade.
+- **STT**: `vosk` + `pyaudio` en hilo dedicado (opcional, si hay micrófono).
 - **LLM**: cliente HTTP a Ollama (`/api/chat`).
-- **TTS**: `piper` CLI oficial, WAV temporal + reproducción (`aplay`/`ffplay`) con limpieza automática.
-- **UI**: `tkinter` con kaomojis por estado.
+- **TTS**: `piper` CLI oficial, con fallback a stdout si el binario no está.
+- **TUI**: `textual` con cara de gato animada (parpadeo + boca al hablar), input de texto integrado.
 - **Concurrencia**: comunicación entre hilos solo por `queue.Queue`.
 
 ## Estructura
@@ -16,86 +15,53 @@ Asistente de IA de escritorio para hardware limitado (netbooks antiguas), diseñ
 ```text
 src/
   main.py
-  ui.py
+  ui.py        <- TUI con textual
   audio.py
-  vision.py
   llm.py
   tts.py
   config.py
-train_face.py
+scripts/
+  download_models.sh
+  run.sh
 requirements.txt
 Dockerfile
 docker-compose.yml
-.dockerignore
 ```
 
-## Requisitos de host
+## Requisitos
 
-- Docker Engine + Docker Compose v2
-- Cámara accesible en `/dev/video0`
-- Audio accesible en `/dev/snd`
-- Servidor X11 activo (para `tkinter`)
-- Ollama ejecutándose en host (`http://host.docker.internal:11434`)
+- Python 3.11+
+- Ollama ejecutándose (`ollama serve`)
+- Micrófono (opcional, sin él funciona en modo texto)
+- Piper (opcional, sin él imprime respuestas por stdout)
 
-## Preparación de modelos
-
-Crear carpeta `models/` en la raíz del proyecto y añadir:
-
-- Vosk ES pequeño: `models/vosk-model-small-es-0.42/`
-- Piper ES ONNX + JSON:
-  - `models/es_ES-mls_10246-medium.onnx`
-  - `models/es_ES-mls_10246-medium.onnx.json`
-- Modelo facial LBPH:
-  - `models/lbph_model.yml`
-  - `models/face_labels.json`
-
-### Entrenar modelo facial
-
-Estructura del dataset:
-
-```text
-dataset/
-  persona_1/
-    foto1.jpg
-    foto2.jpg
-  persona_2/
-    foto1.jpg
-```
-
-Entrenamiento:
+## Rápido
 
 ```bash
-python train_face.py --dataset ./dataset --output models/lbph_model.yml --labels models/face_labels.json
+./run.sh
 ```
 
-## Build y ejecución
+Descarga modelos, instala dependencias, descarga piper si no está, y arranca la TUI.
+
+## Build y ejecución (Docker)
 
 ```bash
 docker compose build
 docker compose up
 ```
 
-Si necesitas invocación explícita de dispositivos:
-
-```bash
-docker compose up --build --force-recreate
-```
-
 ## Variables de entorno relevantes
 
-- `OLLAMA_BASE_URL` (default: `http://host.docker.internal:11434`)
-- `OLLAMA_MODEL` (default: `llama3.2:3b`)
+- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
+- `OLLAMA_MODEL` (default: `ornith:9b`)
 - `VOSK_MODEL_PATH`
 - `PIPER_MODEL_PATH`
 - `PIPER_CONFIG_PATH`
-- `FACE_MODEL_PATH`
-- `FACE_LABELS_PATH`
 - `PLAYBACK_COMMAND` (`aplay` o `ffplay`)
+- `TTS_FALLBACK_STDOUT` (`0` para desactivar fallback, default `1`)
 - `USER_ID` / `GROUP_ID` para mapear el usuario del host en `docker-compose.yml`
 
 ## Desarrollo y pruebas
-
-Pruebas rápidas:
 
 ```bash
 python -m pytest -q
@@ -104,11 +70,5 @@ python -m pytest -q
 Compilación sintáctica:
 
 ```bash
-python -m compileall src train_face.py
+python -m compileall src
 ```
-
-## Notas Ubuntu Server / WSL
-
-- Para WSLg (Windows 11), `DISPLAY` suele configurarse automáticamente.
-- En Ubuntu Server sin entorno gráfico local, usa forwarding X11 desde cliente remoto antes de levantar el contenedor.
-- Asegura permisos para `/dev/video0` y `/dev/snd` en el usuario host.

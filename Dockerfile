@@ -12,19 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     portaudio19-dev \
     libasound2-dev \
-    tk \
-    libgl1 \
-    libglib2.0-0 \
     alsa-utils \
     ffmpeg \
     curl \
     ca-certificates \
-    xauth \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
-      amd64) PIPER_ARCH="x86_64" ;; \
-      arm64) PIPER_ARCH="aarch64" ;; \
+      amd64) PIPER_ARCH="amd64" ;; \
+      arm64) PIPER_ARCH="arm64" ;; \
       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac \
     && curl -L "https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz" -o /tmp/piper.tar.gz \
@@ -37,6 +34,9 @@ WORKDIR ${APP_HOME}
 
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
+
+COPY scripts/download_models.sh /tmp/download_models.sh
+RUN bash /tmp/download_models.sh
 
 COPY . .
 

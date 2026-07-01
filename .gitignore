@@ -5,3 +5,7 @@ __pycache__/
 .env
 .venv/
 venv/
+*.log
+*.db
+models/
+bin/

@@ -5,16 +5,54 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
-from typing import Any
+import unicodedata
+from typing import Any, Callable
 
-import pyaudio
 from vosk import KaldiRecognizer, Model
 
 from src.config import SETTINGS
 
 LOGGER = logging.getLogger(__name__)
+
+# Wake word: "chokita" anywhere in the utterance.
+# ponytail: Vosk small-es (50MB) mishears "chokita" as chiquita/choquita/yo quita/
+# chaqueta/jaquita/quita/chiqui/etc, and rarely places it at the start. Match
+# anywhere in the text with a broad alias set; if a bigger Vosk model
+# (vosk-model-es-0.42, ~1.3GB) ever lands, tighten this back to ^start anchor.
+_WAKE_RE = re.compile(
+    r"\b(chokita|choquita|chiquita|chiquitita|chaquita|jaquita|chocita|choki|chiqui)\b\s*(.*)",
+    re.DOTALL,
+)
+# Stop-voice commands (after wake word): "para", "detente", "callate", ...
+_STOP_WORDS = re.compile(r"^(para|par\u00e1|detente|callate|c\u00e1llate|silencio|alto|stop)\b")
+
+
+def _normalize(text: str) -> str:
+    """Lowercase + strip accents for robust matching."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return text.lower()
+
+
+def parse_wake(text: str) -> tuple[bool, str]:
+    """Returns (matched, remainder). remainder is the command after the wake word.
+
+    Wake word may appear anywhere in the utterance (Vosk small-es often inserts
+    filler/garbage before a misheard "chokita"). Anything said *before* the wake
+    word is dropped — only the text after the wake word is the command.
+    """
+    n = _normalize(text)
+    m = _WAKE_RE.search(n)
+    if not m:
+        return False, ""
+    return True, m.group(2).strip()
+
+
+def is_stop_command(remainder: str) -> bool:
+    """Check if the post-wake-word text is a stop command."""
+    return bool(_STOP_WORDS.match(_normalize(remainder)))
 
 
 class SpeechRecognizerThread(threading.Thread):
@@ -25,11 +63,13 @@ class SpeechRecognizerThread(threading.Thread):
         text_queue: "queue.Queue[str]",
         ui_queue: "queue.Queue[dict[str, Any]]",
         stop_event: threading.Event,
+        on_stop_command: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.text_queue = text_queue
         self.ui_queue = ui_queue
         self.stop_event = stop_event
+        self.on_stop_command = on_stop_command
         self._model: Model | None = None
 
     def _notify(self, state: str, message: str) -> None:
@@ -49,19 +89,46 @@ class SpeechRecognizerThread(threading.Thread):
             raise FileNotFoundError(f"Vosk model not found: {SETTINGS.vosk_model_path}")
 
         if self._model is None:
-            self._model = Model(str(SETTINGS.vosk_model_path))
+            import os as _os
+            _sv = _os.dup(2)
+            _dn = _os.open(_os.devnull, _os.O_WRONLY)
+            _os.dup2(_dn, 2)
+            _os.close(_dn)
+            try:
+                self._model = Model(str(SETTINGS.vosk_model_path))
+            finally:
+                _os.dup2(_sv, 2)
+                _os.close(_sv)
         recognizer = KaldiRecognizer(self._model, SETTINGS.sample_rate_hz)
-        mic = pyaudio.PyAudio()
-        stream = mic.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=SETTINGS.sample_rate_hz,
-            input=True,
-            frames_per_buffer=SETTINGS.audio_chunk_size,
-        )
+
+        # suppress ALSA/JACK noise during pyaudio init (background thread, fd 2)
+        import os as _os
+        _saved_stderr = _os.dup(2)
+        _dn = _os.open(_os.devnull, _os.O_WRONLY)
+        _os.dup2(_dn, 2)
+        _os.close(_dn)
+        try:
+            import pyaudio
+            mic = pyaudio.PyAudio()
+            stream: pyaudio.Stream | None = None
+            try:
+                stream = mic.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=SETTINGS.sample_rate_hz,
+                    input=True,
+                    frames_per_buffer=SETTINGS.audio_chunk_size,
+                )
+            except Exception:
+                mic.terminate()
+                raise
+        finally:
+            _os.dup2(_saved_stderr, 2)
+            _os.close(_saved_stderr)
 
         self._notify("LISTENING", "Escuchando...")
 
+        wake_at: float = 0.0  # timestamp of last bare "chokita" wake (0 = none pending)
         try:
             while not self.stop_event.is_set():
                 chunk = stream.read(SETTINGS.audio_chunk_size, exception_on_overflow=False)
@@ -70,10 +137,52 @@ class SpeechRecognizerThread(threading.Thread):
                     text = payload.get("text", "").strip()
                     if text:
                         LOGGER.info("Recognized text: %s", text)
-                        self.text_queue.put(text)
+                        now = time.time()
+                        # If a bare wake is pending and this utterance arrives
+                        # within the timeout, treat the whole utterance as the
+                        # command continuation (merge). Otherwise re-evaluate wake.
+                        pending = wake_at and (now - wake_at) < SETTINGS.wake_command_timeout_seconds
+                        wake_at = 0.0
+                        if pending:
+                            # Continuation after bare "chokita": use raw text as command.
+                            if is_stop_command(text):
+                                LOGGER.info("Stop command detected (continuation): %s", text)
+                                self._notify("RECOGNIZED", f"[STOP] {text}")
+                                if self.on_stop_command:
+                                    self.on_stop_command()
+                                self._notify("LISTENING", "Escuchando...")
+                                continue
+                            self.text_queue.put(text)
+                            self._notify("RECOGNIZED", text)
+                            self._notify("LISTENING", "Escuchando...")
+                            continue
+                        matched, remainder = parse_wake(text)
+                        if not matched:
+                            # Not addressed to chokita — ignore.
+                            continue
+                        if remainder and is_stop_command(remainder):
+                            LOGGER.info("Stop command detected: %s", text)
+                            self._notify("RECOGNIZED", f"[STOP] {text}")
+                            if self.on_stop_command:
+                                self.on_stop_command()
+                            self._notify("LISTENING", "Escuchando...")
+                            continue
+                        if not remainder:
+                            # Just "chokita" with nothing after — start the timeout window.
+                            wake_at = now
+                            self._notify("RECOGNIZED", f"[WAKE] {text}")
+                            self._notify("LISTENING", "Escuchando...")
+                            continue
+                        self.text_queue.put(remainder)
                         self._notify("RECOGNIZED", text)
                         self._notify("LISTENING", "Escuchando...")
         finally:
-            stream.stop_stream()
-            stream.close()
+            try:
+                stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
             mic.terminate()
