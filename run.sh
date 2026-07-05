@@ -94,7 +94,7 @@ case "$(uname -s)" in
     Linux)
         if command -v apt-get >/dev/null 2>&1; then
             install_sysdeps apt-get "sudo apt-get install -y -qq" \
-                "build-essential portaudio19-dev libasound2-dev alsa-utils ffmpeg curl unzip python3.12-dev"
+                "build-essential portaudio19-dev libasound2-dev alsa-utils ffmpeg curl unzip python3.12-dev libasound2-plugins"
         elif command -v dnf >/dev/null 2>&1; then
             install_sysdeps dnf "sudo dnf install -y" \
                 "gcc-c++ portaudio-devel alsa-lib-devel alsa-utils ffmpeg curl unzip python3.12-devel"
@@ -107,6 +107,32 @@ case "$(uname -s)" in
         fi
         ;;
 esac
+
+# --- WSL: ALSA -> PulseAudio bridge via WSLg ---
+# ponytail: el libportaudio2 de Ubuntu no tiene backend PulseAudio nativo,
+#            asi que puenteamos ALSA->PulseAudio via el plugin libasound2-plugins.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    export PULSE_SERVER="${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}"
+    PULSE_CONF=0
+    if command -v pactl >/dev/null 2>&1; then
+        pactl info >/dev/null 2>&1 && PULSE_CONF=1 || warn "PulseAudio (WSLg) no responde."
+    else
+        # Sin pactl, probamos directo el socket
+        [ -S "$PULSE_SERVER" ] && PULSE_CONF=1
+    fi
+    if [ "$PULSE_CONF" = 1 ]; then
+        if [ ! -f ~/.asoundrc ] || ! grep -q pulse ~/.asoundrc 2>/dev/null; then
+            cat > ~/.asoundrc << 'EOF'
+pcm.!default pulse
+ctl.!default pulse
+EOF
+            ok "ASound configurado para rutear a PulseAudio (WSLg)."
+        fi
+    else
+        warn "WSLg detectado pero PulseAudio no disponible. El microfono no funcionara."
+    fi
+    unset PULSE_CONF
+fi
 
 # --- 4. Ollama: instalar ---
 if ! command -v ollama >/dev/null 2>&1; then
@@ -176,6 +202,16 @@ ok "Dependencias Python instaladas."
 # ponytail: best-effort, no aborta
 case "$(uname -s)" in
     Linux)
+        if grep -qi microsoft /proc/version 2>/dev/null; then
+            # WSL
+            if command -v pactl >/dev/null 2>&1; then
+                pactl info >/dev/null 2>&1 && ok "PulseAudio (WSLg) disponible." || warn "PulseAudio (WSLg) no responde."
+            elif [ -S "$PULSE_SERVER" ] 2>/dev/null; then
+                ok "Socket PulseAudio (WSLg) detectado."
+            else
+                warn "WSLg no disponible. Sin audio."
+            fi
+        fi
         command -v arecord >/dev/null 2>&1 && { arecord -l >/dev/null 2>&1 || warn "Sin entrada de audio detectada (arecord -l)."; }
         command -v aplay >/dev/null 2>&1 && { aplay -l >/dev/null 2>&1 || warn "Sin salida de audio detectada (aplay -l)."; }
         ;;

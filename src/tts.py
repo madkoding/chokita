@@ -35,11 +35,11 @@ if shutil.which("powershell.exe"):
 
 
 class PiperTTS:
-    def __init__(self) -> None:
+    def __init__(self, voice: Any = None) -> None:
         self.playback_cmd = SETTINGS.playback_command
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
-        self._voice: Any = None
+        self._voice = voice
 
     def _get_voice(self) -> Any:
         if self._voice is None:

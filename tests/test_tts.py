@@ -157,6 +157,11 @@ def test_speak_fallback_on_synthesis_failure(capsys) -> None:
     assert "[TTS] fallback text" in captured.out
 
 
+def test_accept_preloaded_voice() -> None:
+    tts = PiperTTS(voice="preloaded")
+    assert tts._voice == "preloaded"
+
+
 def test_stop_already_finished_process() -> None:
     tts = PiperTTS()
     proc = Mock()

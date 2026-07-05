@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import queue
-from typing import Any
+import threading
+import time
+import urllib.request
+from collections.abc import Callable
+from typing import Any, cast
 
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.reactive import reactive
+from textual.screen import Screen
 from textual.widgets import Input, RichLog, Static
+
+from src.config import SETTINGS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -198,6 +207,151 @@ class _PasteAwareInput(Input):
             self._on_big_paste(text)
 
 
+# ponytail: spinner compartido, sin dependencias
+_PRELOAD_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+class PreloadScreen(Screen):
+    """Pantalla de precarga de modelos dentro del TUI. Se autodescarta al terminar."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._jobs = [
+            ("🧠", "Ollama (chat)", str(SETTINGS.ollama_model), self._warm_ollama_chat),
+            ("🔢", "Ollama (embeddings)", str(SETTINGS.ollama_embed_model), self._warm_ollama_embed),
+            ("🎤", "Vosk (STT)", str(SETTINGS.vosk_model_path), self._load_vosk),
+            ("🔊", "Piper (TTS)", str(SETTINGS.piper_model_path), self._load_piper),
+        ]
+        self._statuses: list[str] = ["cargando"] * len(self._jobs)
+        self._results: dict[str, Any] = {}
+        self._spin_idx = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="preload-container"):
+            yield Static("", classes="preload-gap")
+            for i, (ic, name, path, *_) in enumerate(self._jobs):
+                yield Static(f"{ic} {name}", classes="preload-name")
+                yield Static(f"   {path}", classes="preload-path")
+                yield Static(f"   {_PRELOAD_SPINNER[0]} cargando...", id=f"ps-{i}")
+
+    def on_mount(self) -> None:
+        self.set_interval(0.08, self._tick)
+        for i, (_, _, _, fn) in enumerate(self._jobs):
+            threading.Thread(target=self._run_job, args=(i, fn), daemon=True).start()
+        self._deadline = time.time() + SETTINGS.preload_timeout_seconds
+        self.set_interval(0.2, self._check_done)
+
+    def _tick(self) -> None:
+        self._spin_idx = (self._spin_idx + 1) % len(_PRELOAD_SPINNER)
+        for i, s in enumerate(self._statuses):
+            if s == "cargando":
+                w = self.query_one(f"#ps-{i}", Static)
+                if w:
+                    w.update(f"   {_PRELOAD_SPINNER[self._spin_idx]} cargando...")
+
+    def _run_job(self, idx: int, fn: Callable[[], Any]) -> None:
+        try:
+            result = fn()
+            self._statuses[idx] = "ok"
+            self._results[self._jobs[idx][1]] = result
+            self.call_from_thread(self._update_status, idx)  # type: ignore[attr-defined]
+        except Exception:
+            LOGGER.warning("Precarga de %s fallo", self._jobs[idx][1], exc_info=True)
+            self._statuses[idx] = "fallo"
+            self.call_from_thread(self._update_status, idx)  # type: ignore[attr-defined]
+
+    def _update_status(self, idx: int) -> None:
+        s = self._statuses[idx]
+        w = self.query_one(f"#ps-{idx}", Static)
+        if not w:
+            return
+        if s == "ok":
+            w.update(Text("   ✓ cargado", style=f"bold {GREEN}"))
+        elif s == "fallo":
+            w.update(Text("   ✗ falló", style=f"bold {RED}"))
+        elif s == "timeout":
+            w.update(Text("   ⏱ timeout", style=f"bold {YELLOW}"))
+
+    def _check_done(self) -> None:
+        if time.time() > self._deadline:
+            for i, s in enumerate(self._statuses):
+                if s == "cargando":
+                    self._statuses[i] = "timeout"
+                    self._update_status(i)
+            self._finish()
+            return
+        if all(s != "cargando" for s in self._statuses):
+            self._finish()
+
+    def _finish(self) -> None:
+        with contextlib.suppress(Exception):
+            app = cast("FaceApp", self.app)
+            app._on_preload_complete(self._results)
+        with contextlib.suppress(Exception):
+            self.app.pop_screen()
+
+    def _warm_ollama_chat(self) -> bool:
+        data = json.dumps({
+            "model": SETTINGS.ollama_model,
+            "messages": [{"role": "user", "content": "hola"}],
+            "stream": False,
+            "keep_alive": SETTINGS.ollama_keep_alive,
+        }).encode()
+        req = urllib.request.Request(
+            f"{SETTINGS.ollama_base_url}/api/chat",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds).read()
+        return True
+
+    def _warm_ollama_embed(self) -> bool:
+        data = json.dumps({
+            "model": SETTINGS.ollama_embed_model,
+            "prompt": "test",
+            "keep_alive": SETTINGS.ollama_keep_alive,
+        }).encode()
+        req = urllib.request.Request(
+            f"{SETTINGS.ollama_base_url}/api/embeddings",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds).read()
+        return True
+
+    def _load_vosk(self) -> object:
+        from vosk import Model
+        with contextlib.redirect_stderr(None):
+            return Model(str(SETTINGS.vosk_model_path))
+
+    def _load_piper(self) -> Any:
+        from piper import PiperVoice
+        return PiperVoice.load(str(SETTINGS.piper_model_path))
+
+
+PreloadScreen.CSS = f"""
+PreloadScreen {{
+    align: center middle;
+    background: {BG};
+}}
+.preload-gap {{
+    height: 3;
+}}
+.preload-name {{
+    color: {ACCENT};
+    text-style: bold;
+    margin-top: 1;
+}}
+.preload-path {{
+    color: {TEXT_PRIMARY};
+    opacity: 0.8;
+}}
+.preload-status {{
+    margin-bottom: 0;
+}}
+"""
+
+
 class FaceApp(App):
     CSS = f"""
     Screen {{
@@ -287,9 +441,11 @@ class FaceApp(App):
         self,
         text_queue: queue.Queue[str],
         ui_queue: queue.Queue[dict[str, Any]],
+        on_preload_done: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.text_queue = text_queue
         self.ui_queue = ui_queue
+        self.on_preload_done = on_preload_done
         self._pasted_buffer: str | None = None
         super().__init__()
 
@@ -314,7 +470,12 @@ class FaceApp(App):
         self.set_interval(0.05, self._drain_ui)
         self.set_interval(3.0, self._do_blink)
         self.set_interval(0.12, self._toggle_mouth)
-        self.query_one("#input", Input).focus()
+        self.push_screen(PreloadScreen())
+
+    def _on_preload_complete(self, results: dict[str, Any]) -> None:
+        if self.on_preload_done:
+            self.on_preload_done(results)
+        self.set_timer(0.1, lambda: self.query_one("#input", Input).focus())
 
     def _do_blink(self) -> None:
         try:

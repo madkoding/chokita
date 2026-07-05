@@ -79,6 +79,7 @@ class SpeechRecognizerThread(threading.Thread):
         stop_event: threading.Event,
         on_stop_command: Callable[[], None] | None = None,
         mute_event: threading.Event | None = None,
+        model: object | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.text_queue = text_queue
@@ -86,7 +87,7 @@ class SpeechRecognizerThread(threading.Thread):
         self.stop_event = stop_event
         self.on_stop_command = on_stop_command
         self.mute_event = mute_event or threading.Event()
-        self._model: object | None = None
+        self._model = model
 
     def _notify(self, state: str, message: str) -> None:
         self.ui_queue.put({"type": "state", "state": state, "message": message})

@@ -130,6 +130,9 @@ def assistant_loop(
             ui_queue.put({"type": "log", "message": str(exc)})
 
 
+
+
+
 def _has_microphone() -> bool:
     import contextlib
 
@@ -147,7 +150,6 @@ def _has_microphone() -> bool:
 def main() -> None:
     print("chokita — iniciando...", flush=True)
     _smoke_check()
-    print("✓ Ollama listo", flush=True)
 
     # Memory + session
     memory = Memory()
@@ -183,24 +185,30 @@ def main() -> None:
         abort_event.set()
         tts.stop()
 
-    stt_thread: SpeechRecognizerThread | None = None
+    stt_holder: list[SpeechRecognizerThread | None] = [None]
 
     def _start_stt() -> None:
-        nonlocal stt_thread
         if _has_microphone():
-            stt_thread = SpeechRecognizerThread(
+            thread = SpeechRecognizerThread(
                 text_queue=text_queue,
                 ui_queue=ui_queue,
                 stop_event=stop_event,
                 on_stop_command=_on_stop_command,
                 mute_event=mute_event,
             )
-            stt_thread.start()
+            stt_holder[0] = thread
+            thread.start()
         else:
             LOGGER.warning("Micrófono no detectado. Modo solo texto.")
             ui_queue.put({"type": "log", "message": "🔇 Micrófono no detectado. Modo solo texto."})
 
     threading.Thread(target=_start_stt, daemon=True, name="stt-launcher").start()
+
+    def _on_preload_done(results: dict[str, Any]) -> None:
+        if results.get("Piper (TTS)"):
+            tts._voice = results["Piper (TTS)"]
+        if results.get("Vosk (STT)") and stt_holder[0]:
+            stt_holder[0]._model = results["Vosk (STT)"]
 
     llm = OllamaClient(memory=memory, ui_queue=ui_queue)
     worker_thread = threading.Thread(
@@ -249,19 +257,18 @@ def main() -> None:
         SETTINGS.rem_raptor_interval_seconds,
     )
 
-    print("Iniciando interfaz...", flush=True)
     # Clear terminal so TUI starts on a clean screen
     print("\033[2J\033[H", end="", flush=True)
     try:
-        app = FaceApp(text_queue, ui_queue)
+        app = FaceApp(text_queue, ui_queue, on_preload_done=_on_preload_done)
         app.run()
     except Exception as exc:
         LOGGER.critical("TUI no disponible: %s", exc)
         raise
     finally:
         stop_event.set()
-        if stt_thread:
-            stt_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
+        if stt_holder[0]:
+            stt_holder[0].join(timeout=SETTINGS.shutdown_join_timeout_seconds)
         worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
         soul_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
         sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)

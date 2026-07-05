@@ -86,5 +86,8 @@ class Settings:
     compact_threshold: float = float(os.getenv("COMPACT_THRESHOLD", "0.80"))
     # Estimación: 1 token ≈ 4 chars. Sin tiktoken.
 
+    # --- Precarga ---
+    preload_timeout_seconds: float = float(os.getenv("PRELOAD_TIMEOUT_SECONDS", "120"))
+
 
 SETTINGS = Settings()

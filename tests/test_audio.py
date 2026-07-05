@@ -1,4 +1,7 @@
-from src.audio import is_stop_command, parse_wake
+import queue
+import threading
+
+from src.audio import SpeechRecognizerThread, is_stop_command, parse_wake
 
 
 def test_wake_exact():
@@ -51,3 +54,13 @@ def test_stop_silencio():
 
 def test_stop_none():
     assert is_stop_command("abre vscode") is False
+
+
+def test_stt_accepts_preloaded_model():
+    t = SpeechRecognizerThread(
+        text_queue=queue.Queue(),
+        ui_queue=queue.Queue(),
+        stop_event=threading.Event(),
+        model="fake_preloaded",
+    )
+    assert t._model == "fake_preloaded"
