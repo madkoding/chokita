@@ -21,19 +21,17 @@ PLAYBACK_POWERSHELL = "powershell"
 PLAYBACK_AUTO = "auto"
 
 
-def _available_playback_cmds() -> list[list[str]]:
-    attempts: list[list[str]] = []
-    if shutil.which(PLAYBACK_AFPLAY):
-        attempts.append([PLAYBACK_AFPLAY])
-    if shutil.which(PLAYBACK_PAPLAY):
-        attempts.append([PLAYBACK_PAPLAY])
-    if shutil.which(PLAYBACK_APLAY):
-        attempts.append([PLAYBACK_APLAY, "-q"])
-    if shutil.which(PLAYBACK_FFPLAY):
-        attempts.append([PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp"])
-    if shutil.which("powershell.exe"):
-        attempts.append(["__powershell__"])
-    return attempts
+_PLAYBACK_CMDS: list[list[str]] = []
+if shutil.which(PLAYBACK_AFPLAY):
+    _PLAYBACK_CMDS.append([PLAYBACK_AFPLAY])
+if shutil.which(PLAYBACK_PAPLAY):
+    _PLAYBACK_CMDS.append([PLAYBACK_PAPLAY])
+if shutil.which(PLAYBACK_APLAY):
+    _PLAYBACK_CMDS.append([PLAYBACK_APLAY, "-q"])
+if shutil.which(PLAYBACK_FFPLAY):
+    _PLAYBACK_CMDS.append([PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp"])
+if shutil.which("powershell.exe"):
+    _PLAYBACK_CMDS.append(["__powershell__"])
 
 
 class PiperTTS:
@@ -86,12 +84,11 @@ class PiperTTS:
         if self.playback_cmd != PLAYBACK_AUTO:
             raise RuntimeError(f"Unsupported playback command: {self.playback_cmd}")
 
-        attempts = _available_playback_cmds()
-        if not attempts:
+        if not _PLAYBACK_CMDS:
             raise RuntimeError("No playback binary available (aplay/ffplay/powershell)")
 
         last_error: Exception | None = None
-        for cmd in attempts:
+        for cmd in _PLAYBACK_CMDS:
             try:
                 if cmd[0] == "__powershell__":
                     self._play_via_powershell(wav_path)

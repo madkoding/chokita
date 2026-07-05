@@ -219,10 +219,10 @@ class Memory:
     def seed_soul(self, soul_text: str) -> None:
         """Chunk SOUL.md by section (## headers) and embed each. Idempotent: clears old 'soul' chunks first."""
         chunks = _split_sections(soul_text)
+        embedded = [(heading, body, self.embed(body)) for heading, body in chunks]
         with self._lock:
             self._conn.execute("DELETE FROM chunks WHERE source='soul'")
-            for heading, body in chunks:
-                emb = self.embed(body)
+            for heading, body, emb in embedded:
                 self._conn.execute(
                     "INSERT INTO chunks(source, kind, text, embedding, created_at) VALUES (?,?,?,?,?)",
                     ("soul", "soul", f"{heading}\n{body}", json.dumps(emb), time.time()),

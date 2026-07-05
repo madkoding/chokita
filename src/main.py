@@ -7,6 +7,7 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from src.audio import SpeechRecognizerThread
@@ -17,11 +18,13 @@ from src.sleep import SleepThread
 from src.soul import SoulThread
 from src.tts import PiperTTS
 
+LOG_DIR = Path.home() / ".local/share/chokita"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.handlers.RotatingFileHandler("chokita.log", maxBytes=5_242_880, backupCount=2),
+        logging.handlers.RotatingFileHandler(LOG_DIR / "chokita.log", maxBytes=5_242_880, backupCount=2),
     ],
 )
 LOGGER = logging.getLogger(__name__)
@@ -206,13 +209,10 @@ def main() -> None:
     )
     worker_thread.start()
 
-    # Single shared client for soul reflection + REM summarization (no tools, no memory writes).
-    _aux_llm = OllamaClient(memory=memory)
-
     # Soul reflection thread: idle musings on her own personality.
     soul_thread = SoulThread(
         memory=memory,
-        chat_fn=_aux_llm.chat_raw,
+        chat_fn=llm.chat_raw,
         stop_event=stop_event,
         activity_fn=_seconds_idle,
     )
@@ -226,7 +226,7 @@ def main() -> None:
 
     # REM sleep thread: reindexes the RAG (RAPTOR) while idle.
     def _summarize(text: str) -> str:
-        return _aux_llm.chat_raw(
+        return llm.chat_raw(
             [
                 {"role": "system", "content": "Resumí los siguientes puntos en 2-3 lineas, en español rioplatense."},
                 {"role": "user", "content": text},

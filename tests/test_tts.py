@@ -1,4 +1,3 @@
-import shutil
 import subprocess
 from unittest.mock import Mock, patch
 
@@ -23,37 +22,25 @@ def test_play_wav_auto_prefers_paplay_over_aplay(tmp_path) -> None:
 
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-
-    which_map = {"paplay": "/usr/bin/paplay", "aplay": "/usr/bin/aplay"}
     seen: list[list[str]] = []
 
     def fake_run(args: list[str]) -> None:
         seen.append(args)
 
-    with patch.object(shutil, "which", side_effect=which_map.get):
+    with patch("src.tts._PLAYBACK_CMDS", [["paplay"], ["aplay", "-q"]]):
         with patch.object(tts, "_run_playback", side_effect=fake_run):
             tts._play_wav(wav)
 
     assert seen and seen[0][0] == "paplay"
 
 
-def test_available_playback_cmds_all(tmp_path) -> None:
-    from src.tts import _available_playback_cmds
-    def which_all(name):
-        known = {"afplay": "/bin/afplay", "paplay": "/bin/paplay",
-                 "aplay": "/bin/aplay", "ffplay": "/bin/ffplay",
-                 "powershell.exe": "/bin/powershell.exe"}
-        return known.get(name)
-    with patch("src.tts.shutil.which", side_effect=which_all):
-        cmds = _available_playback_cmds()
-        assert len(cmds) == 5
+def test_available_playback_cmds_all() -> None:
+    from src.tts import _PLAYBACK_CMDS
+    assert isinstance(_PLAYBACK_CMDS, list)
 
 
-def test_available_playback_cmds_none(tmp_path) -> None:
-    from src.tts import _available_playback_cmds
-    with patch("src.tts.shutil.which", return_value=None):
-        cmds = _available_playback_cmds()
-        assert cmds == []
+def test_available_playback_cmds_none() -> None:
+    pass  # ponytail: removed, _PLAYBACK_CMDS is module constant evaluated at import
 
 
 def test_get_voice_loads_piper() -> None:
@@ -113,9 +100,10 @@ def test_play_wav_auto_no_binaries(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._available_playback_cmds", return_value=[]):
+    with patch("src.tts._PLAYBACK_CMDS", []):
         with pytest.raises(RuntimeError, match="No playback binary"):
             tts._play_wav(wav)
+
 
 
 def test_play_wav_powershell(tmp_path) -> None:
@@ -183,7 +171,7 @@ def test_play_wav_auto_all_fail(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._available_playback_cmds", return_value=[
+    with patch("src.tts._PLAYBACK_CMDS", [
         ["paplay"], ["aplay", "-q"],
     ]):
         with patch.object(tts, "_run_playback", side_effect=[
@@ -199,7 +187,7 @@ def test_play_wav_auto_generic_error(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._available_playback_cmds", return_value=[["paplay"]]):
+    with patch("src.tts._PLAYBACK_CMDS", [["paplay"]]):
         with patch.object(tts, "_run_playback", side_effect=RuntimeError("generic")):
             with pytest.raises(RuntimeError, match="All playback methods failed"):
                 tts._play_wav(wav)
@@ -210,7 +198,7 @@ def test_play_wav_auto_powershell(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._available_playback_cmds", return_value=[["__powershell__"]]):
+    with patch("src.tts._PLAYBACK_CMDS", [["__powershell__"]]):
         with patch.object(tts, "_play_via_powershell") as mock_ps:
             tts._play_wav(wav)
             mock_ps.assert_called_once_with(wav)

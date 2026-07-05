@@ -148,7 +148,7 @@ def test_maybe_compact_triggers() -> None:
     client, memory = _make_client()
     client.ui_queue = q.Queue()
     client.memory.compact_history = Mock(return_value=5)
-    big = "x" * 12
+    big = "x" * 30  # 7 tokens each with chars_per_token=4, 8 msgs = 56 total
     messages = [
         {"role": "system", "content": big},
     ] + [
@@ -156,7 +156,6 @@ def test_maybe_compact_triggers() -> None:
         for i in range(7)
     ]
     with patch("src.llm.SETTINGS") as mock_s:
-        mock_s.chars_per_token = 1
         mock_s.context_window_tokens = 100
         mock_s.compact_threshold = 0.5
         with patch.object(client, "_raw_chat", return_value="resumen de todo"):
@@ -276,7 +275,6 @@ def test_maybe_compact_too_few_messages() -> None:
         {"role": "user", "content": "hi"},
     ]
     with patch("src.llm.SETTINGS") as mock_s:
-        mock_s.chars_per_token = 1
         mock_s.context_window_tokens = 100
         mock_s.compact_threshold = 0.5
         result = client._maybe_compact(messages)
@@ -296,7 +294,6 @@ def test_maybe_compact_summary_raises() -> None:
         for i in range(7)
     ]
     with patch("src.llm.SETTINGS") as mock_s:
-        mock_s.chars_per_token = 1
         mock_s.context_window_tokens = 100
         mock_s.compact_threshold = 0.5
         with patch.object(client, "_raw_chat", side_effect=RuntimeError("fail")):

@@ -74,7 +74,6 @@ class Settings:
     # Umbral de uso para disparar compactación (0-1).
     compact_threshold: float = float(os.getenv("COMPACT_THRESHOLD", "0.80"))
     # Estimación: 1 token ≈ 4 chars. Sin tiktoken.
-    chars_per_token: int = int(os.getenv("CHARS_PER_TOKEN", "4"))
 
 
 SETTINGS = Settings()

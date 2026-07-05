@@ -63,7 +63,7 @@ class OllamaClient:
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         """ponytail: 1 token ≈ 4 chars. No tiktoken, good enough for a budget bar."""
-        return max(1, len(text) // SETTINGS.chars_per_token)
+        return max(1, len(text) // 4)
 
     def _total_tokens(self, messages: list[dict[str, str]]) -> int:
         return sum(self._estimate_tokens(m.get("content", "")) for m in messages)

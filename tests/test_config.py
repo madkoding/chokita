@@ -12,7 +12,6 @@ def test_defaults():
     assert SETTINGS.raptor_max_levels == 4
     assert SETTINGS.context_window_tokens == 262144
     assert SETTINGS.compact_threshold == 0.80
-    assert SETTINGS.chars_per_token == 4
     assert SETTINGS.tts_fallback_stdout is True
     assert SETTINGS.playback_command == "auto"
 
