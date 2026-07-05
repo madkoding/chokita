@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import queue
 import re
 import struct
 import threading
 import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from src.config import SETTINGS
@@ -20,6 +22,20 @@ LOGGER = logging.getLogger(__name__)
 # Wake word: "chokita" anywhere in the utterance.
 # ponytail: Vosk es-0.42 (1.4GB) is accurate enough that the wake word
 # should be recognized cleanly. Aliases kept as fallback for edge cases.
+@contextlib.contextmanager
+def _stderr_to_devnull() -> Iterator[None]:
+    """Temporarially redirect stderr to /dev/null (for Vosk/pyaudio init noise)."""
+    saved = os.dup(2)
+    dn = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(dn, 2)
+    os.close(dn)
+    try:
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+
+
 _WAKE_RE = re.compile(
     r"\b(chokita|choquita|chiquita|chiquitita|chaquita|jaquita|chocita|choki|chiqui)\b\s*(.*)",
     re.DOTALL,
@@ -94,44 +110,26 @@ class SpeechRecognizerThread(threading.Thread):
             raise FileNotFoundError(f"Vosk model not found: {SETTINGS.vosk_model_path}")
 
         if self._model is None:
-            import os as _os
-
             from vosk import KaldiRecognizer, Model
-            _sv = _os.dup(2)
-            _dn = _os.open(_os.devnull, _os.O_WRONLY)
-            _os.dup2(_dn, 2)
-            _os.close(_dn)
-            try:
+            with _stderr_to_devnull():
                 self._model = Model(str(SETTINGS.vosk_model_path))
-            finally:
-                _os.dup2(_sv, 2)
-                _os.close(_sv)
         recognizer = KaldiRecognizer(self._model, SETTINGS.sample_rate_hz)
 
-        # suppress ALSA/JACK noise during pyaudio init (background thread, fd 2)
-        import os as _os
-        _saved_stderr = _os.dup(2)
-        _dn = _os.open(_os.devnull, _os.O_WRONLY)
-        _os.dup2(_dn, 2)
-        _os.close(_dn)
-        try:
-            import pyaudio
+        import pyaudio
+        with _stderr_to_devnull():
             mic = pyaudio.PyAudio()
-            stream: pyaudio.Stream | None = None
-            try:
-                stream = mic.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=SETTINGS.sample_rate_hz,
-                    input=True,
-                    frames_per_buffer=SETTINGS.audio_chunk_size,
-                )
-            except Exception:
-                mic.terminate()
-                raise
-        finally:
-            _os.dup2(_saved_stderr, 2)
-            _os.close(_saved_stderr)
+        stream: pyaudio.Stream | None = None
+        try:
+            stream = mic.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=SETTINGS.sample_rate_hz,
+                input=True,
+                frames_per_buffer=SETTINGS.audio_chunk_size,
+            )
+        except Exception:
+            mic.terminate()
+            raise
 
         self._notify("LISTENING", "Escuchando...")
 
@@ -200,12 +198,8 @@ class SpeechRecognizerThread(threading.Thread):
                         self._notify("RECOGNIZED", text)
                         self._notify("LISTENING", "Escuchando...")
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 stream.stop_stream()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 stream.close()
-            except Exception:
-                pass
             mic.terminate()

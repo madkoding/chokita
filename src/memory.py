@@ -132,12 +132,17 @@ class Memory:
     def recent_messages(self, limit: int | None = None) -> list[dict[str, Any]]:
         limit = limit or SETTINGS.history_window
         with self._lock:
+            summary_rows = self._conn.execute(
+                "SELECT role, content FROM messages "
+                "WHERE session_id=? AND role='system' ORDER BY id",
+                (self._session_id,),
+            ).fetchall()
             rows = self._conn.execute(
                 "SELECT role, content, tool_name, tool_args FROM messages "
-                "WHERE session_id=? ORDER BY id DESC LIMIT ?",
+                "WHERE session_id=? AND role!='system' ORDER BY id DESC LIMIT ?",
                 (self._session_id, limit),
             ).fetchall()
-        out = []
+        out = [{"role": r, "content": c} for r, c in summary_rows]
         for role, content, tool_name, tool_args in reversed(rows):
             msg: dict[str, Any] = {"role": role, "content": content}
             if tool_name:
@@ -208,6 +213,13 @@ class Memory:
         return _embed_ollama(text)
 
     def add_chunk(self, source: str, kind: str, text: str) -> None:
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT id FROM chunks WHERE source=? AND kind=? AND text=? LIMIT 1",
+                (source, kind, text),
+            ).fetchone()
+            if existing:
+                return
         emb = self.embed(text)
         with self._lock:
             self._conn.execute(
@@ -253,14 +265,16 @@ class Memory:
     # ---- meta helpers ----
 
     def _get_meta(self, key: str, default: str = "") -> str:
-        row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-        return row[0] if row else default
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            return row[0] if row else default
 
     def _set_meta(self, key: str, value: str) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", (key, value)
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", (key, value)
+            )
+            self._conn.commit()
 
     # ---- RAPTOR: hierarchical clustering + summarization ----
 
@@ -377,6 +391,7 @@ class Memory:
 
 
 @functools.lru_cache(maxsize=256)
+# ponytail: RAM cache de 256 embeddings (~1MB). Si hay miles de chunks únicos, mover a SQLite embeddings_cache(text_hash, embedding) y borrar el lru_cache.
 def _embed_ollama(text: str) -> list[float]:
     url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/embeddings"
     data = json.dumps({
@@ -420,7 +435,6 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list[list[dict[str, Any]]]:
     """Stdlib k-means with cosine distance. items must have 'embedding' (list[float]).
-    Uses numpy if available (much faster with many vectors).
     # ponytail: random init, fixed iters, no convergence check; good enough for RAPTOR clustering.
     """
     if k <= 0 or not items:
@@ -429,9 +443,9 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
     k = min(k, n_items)
     dim = len(items[0]["embedding"])
 
-    # Pure Python k-means
+    rng = random.Random(SETTINGS.raptor_seed)
     embs = [it["embedding"] for it in items]
-    centroids = [random.choice(embs) for _ in range(k)]
+    centroids = [rng.choice(embs) for _ in range(k)]
     for _ in range(iters):
         clusters: list[list[int]] = [[] for _ in range(k)]
         for i, e in enumerate(embs):
@@ -445,10 +459,10 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
                         acc[d] += embs[idx][d]
                 n = len(clusters[c])
                 centroids[c] = [v / n for v in acc]
-    result2: list[list[dict[str, Any]]] = [[] for _ in range(k)]
+    result: list[list[dict[str, Any]]] = [[] for _ in range(k)]
     for i, it in enumerate(items):
         best = max(range(k), key=lambda c: _cosine(embs[i], centroids[c]))
-        result2[best].append(it)
-    return [c for c in result2 if c]
+        result[best].append(it)
+    return [c for c in result if c]
 
 

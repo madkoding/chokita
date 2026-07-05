@@ -23,7 +23,8 @@ class Settings:
     wake_command_timeout_seconds: float = float(os.getenv("WAKE_COMMAND_TIMEOUT_SECONDS", "12.0"))
 
     piper_model_path: Path = Path(os.getenv("PIPER_MODEL_PATH", "models/es_ES-sharvard-medium.onnx"))
-    piper_speaker: int | None = int(os.getenv("PIPER_SPEAKER", "1")) if os.getenv("PIPER_SPEAKER", "1") != "" else None
+    _piper_speaker_val = os.getenv("PIPER_SPEAKER", "1")
+    piper_speaker: int | None = int(_piper_speaker_val) if _piper_speaker_val else None
     playback_command: str = os.getenv("PLAYBACK_COMMAND", "auto")
     tts_fallback_stdout: bool = os.getenv("TTS_FALLBACK_STDOUT", "1") in ("1", "true", "yes")
 
@@ -62,6 +63,8 @@ class Settings:
     raptor_max_levels: int = int(os.getenv("RAPTOR_MAX_LEVELS", "4"))
     # Chars máximos por resumen de cluster.
     raptor_summary_max_chars: int = int(os.getenv("RAPTOR_SUMMARY_MAX_CHARS", "400"))
+    # Semilla para k-means (RAPTOR determinista entre runs).
+    raptor_seed: int = int(os.getenv("RAPTOR_SEED", "42"))
 
 
     # --- Memoria largo plazo ---

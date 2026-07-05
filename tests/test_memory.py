@@ -192,6 +192,7 @@ def test_raptor_summarize_fails(mem):
         mock_s.raptor_cluster_k = 2
         mock_s.raptor_max_levels = 3
         mock_s.raptor_summary_max_chars = 400
+        mock_s.raptor_seed = 42
         mem.clear_raptor()
         with mem._lock:
             mem._conn.execute("DELETE FROM chunks")
@@ -233,3 +234,23 @@ def test_build_raptor_cluster_k_zero(mem):
             mem.add_chunk("reflection", "note", f"chunk {i}")
         log = mem.build_raptor(lambda t: "resumen")
         assert any("Nivel 0" in line for line in log)
+
+
+def test_compact_history_ordering(mem):
+    for i in range(6):
+        role = "user" if i % 2 == 0 else "assistant"
+        mem.add_message(role, f"msg {i}")
+    mem.compact_history("resumen va al inicio")
+    recent = mem.recent_messages(limit=10)
+    assert recent[0]["role"] == "system"
+    assert "resumen va al inicio" in recent[0]["content"]
+
+
+def test_add_chunk_dedup(mem):
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("memory", "episode", "memoria unica")
+        mem.add_chunk("memory", "episode", "memoria unica")
+        mem.add_chunk("memory", "memory", "memoria unica")
+        mem.add_chunk("memory", "episode", "memoria diferente")
+    rows = mem._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
+    assert rows[0] == 3

@@ -118,7 +118,7 @@ _TOOLS: dict[str, Any] = {
     "bash": _bash,
 }
 
-_TOOLS_DOC = """\
+TOOLS_DOC = """\
 - read(path: str, offset: int=0, limit: int=200): Leer un archivo de texto del workdir.
 - list(path: str=.): Listar entradas de un directorio del workdir.
 - glob(pattern: str): Buscar archivos por patron glob desde la raiz del workdir.
@@ -139,5 +139,4 @@ def call_tool(name: str, args: dict[str, Any]) -> str:
         return f"Error en tool {name}: {e}"
 
 
-def tools_system_doc() -> str:
-    return _TOOLS_DOC
+tools_system_doc = TOOLS_DOC

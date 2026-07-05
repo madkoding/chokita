@@ -22,7 +22,7 @@ from typing import Any
 
 from src.config import SETTINGS
 from src.memory import Memory
-from src.tools import call_tool, tools_system_doc
+from src.tools import TOOLS_DOC, call_tool
 
 LOGGER = logging.getLogger(__name__)
 
@@ -80,6 +80,9 @@ class OllamaClient:
             "pct": min(pct, 100.0),
         })
 
+    def _emit_with_reply(self, messages: list[dict[str, str]], reply: str) -> None:
+        self._emit_tokens(messages + [{"role": "assistant", "content": reply}])
+
     def _maybe_compact(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
         """If token usage exceeds threshold, summarize old history and compact."""
         used = self._total_tokens(messages)
@@ -130,7 +133,7 @@ class OllamaClient:
             tool_calls = _TOOL_RE.findall(reply)
             if not tool_calls:
                 self.memory.add_message("assistant", reply)
-                self._emit_tokens(messages + [{"role": "assistant", "content": reply}])
+                self._emit_with_reply(messages, reply)
                 return reply
 
             messages.append({"role": "assistant", "content": reply})
@@ -165,7 +168,7 @@ class OllamaClient:
         if reply is None:
             return SETTINGS.ollama_fallback_message
         self.memory.add_message("assistant", reply)
-        self._emit_tokens(messages + [{"role": "assistant", "content": reply}])
+        self._emit_with_reply(messages, reply)
         return reply
 
     def chat_raw(self, messages: list[dict[str, str]]) -> str:
@@ -243,7 +246,7 @@ class OllamaClient:
             LOGGER.debug("RAPTOR retrieve failed (tree empty or embed model?)")
 
         parts.append("\n\n## Tools disponibles")
-        parts.append(tools_system_doc())
+        parts.append(TOOLS_DOC)
         parts.append(TOOL_FORMAT_HINT)
         return "\n".join(parts)
 

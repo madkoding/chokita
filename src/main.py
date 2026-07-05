@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
 import queue
@@ -7,6 +8,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +57,6 @@ def _smoke_check() -> None:
             print("Ejecutá: bash scripts/download_models.sh")
             sys.exit(1)
     try:
-        import urllib.request
         url = f"{SETTINGS.ollama_base_url}/api/tags"
         urllib.request.urlopen(url, timeout=3)
     except Exception:
@@ -65,9 +66,8 @@ def _smoke_check() -> None:
         print(f"  ollama pull {SETTINGS.ollama_model}")
         sys.exit(1)
     try:
-        import json as _json
         embed_url = f"{SETTINGS.ollama_base_url}/api/embeddings"
-        data = _json.dumps({"model": SETTINGS.ollama_embed_model, "prompt": "test"}).encode()
+        data = json.dumps({"model": SETTINGS.ollama_embed_model, "prompt": "test"}).encode()
         req = urllib.request.Request(embed_url, data=data, headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
     except Exception:
@@ -107,8 +107,10 @@ def assistant_loop(
 
             ui_queue.put({"type": "state", "state": "SPEAKING", "message": answer})
             mute_event.set()
-            tts.speak(answer)
-            mute_event.clear()
+            try:
+                tts.speak(answer)
+            finally:
+                mute_event.clear()
             if abort_event.is_set():
                 tts.stop()
             ui_queue.put({"type": "state", "state": "IDLE", "message": "Esperando comando..."})
@@ -256,20 +258,20 @@ def main() -> None:
     except Exception as exc:
         LOGGER.critical("TUI no disponible: %s", exc)
         raise
-
-    stop_event.set()
-    if stt_thread:
-        stt_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
-    worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
-    soul_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
-    sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
-    # Final long-term memory extraction before closing.
-    try:
-        llm.extract_memories()
-    except Exception:
-        LOGGER.warning("Final memory extraction failed")
-    memory.end_session()
-    memory.close()
+    finally:
+        stop_event.set()
+        if stt_thread:
+            stt_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
+        worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
+        soul_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
+        sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
+        # Final long-term memory extraction before closing.
+        try:
+            llm.extract_memories()
+        except Exception:
+            LOGGER.warning("Final memory extraction failed")
+        memory.end_session()
+        memory.close()
 
 
 if __name__ == "__main__":

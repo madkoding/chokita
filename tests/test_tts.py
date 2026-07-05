@@ -22,21 +22,21 @@ def test_play_wav_auto_prefers_paplay_over_aplay(tmp_path) -> None:
 
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    seen: list[list[str]] = []
+    seen: list[str] = []
 
     def fake_run(args: list[str]) -> None:
-        seen.append(args)
+        seen.append(args[0])
 
-    with patch("src.tts._PLAYBACK_CMDS", [["paplay"], ["aplay", "-q"]]):
+    with patch("src.tts._PLAYBACK_BACKENDS", [("paplay", None), ("aplay", ["-q"])]):
         with patch.object(tts, "_run_playback", side_effect=fake_run):
             tts._play_wav(wav)
 
-    assert seen and seen[0][0] == "paplay"
+    assert seen and seen[0] == "paplay"
 
 
 def test_available_playback_cmds_all() -> None:
-    from src.tts import _PLAYBACK_CMDS
-    assert isinstance(_PLAYBACK_CMDS, list)
+    from src.tts import _PLAYBACK_BACKENDS
+    assert isinstance(_PLAYBACK_BACKENDS, list)
 
 
 def test_available_playback_cmds_none() -> None:
@@ -100,7 +100,7 @@ def test_play_wav_auto_no_binaries(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._PLAYBACK_CMDS", []):
+    with patch("src.tts._PLAYBACK_BACKENDS", []):
         with pytest.raises(RuntimeError, match="No playback binary"):
             tts._play_wav(wav)
 
@@ -171,8 +171,8 @@ def test_play_wav_auto_all_fail(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._PLAYBACK_CMDS", [
-        ["paplay"], ["aplay", "-q"],
+    with patch("src.tts._PLAYBACK_BACKENDS", [
+        ("paplay", None), ("aplay", ["-q"]),
     ]):
         with patch.object(tts, "_run_playback", side_effect=[
             subprocess.CalledProcessError(1, "paplay"),
@@ -187,7 +187,7 @@ def test_play_wav_auto_generic_error(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._PLAYBACK_CMDS", [["paplay"]]):
+    with patch("src.tts._PLAYBACK_BACKENDS", [("paplay", None)]):
         with patch.object(tts, "_run_playback", side_effect=RuntimeError("generic")):
             with pytest.raises(RuntimeError, match="All playback methods failed"):
                 tts._play_wav(wav)
@@ -198,7 +198,7 @@ def test_play_wav_auto_powershell(tmp_path) -> None:
     wav.write_bytes(b"RIFF")
     tts = PiperTTS()
     tts.playback_cmd = "auto"
-    with patch("src.tts._PLAYBACK_CMDS", [["__powershell__"]]):
+    with patch("src.tts._PLAYBACK_BACKENDS", [("powershell", None)]):
         with patch.object(tts, "_play_via_powershell") as mock_ps:
             tts._play_wav(wav)
             mock_ps.assert_called_once_with(wav)

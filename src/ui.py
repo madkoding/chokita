@@ -96,7 +96,8 @@ class KaomojiFace(Static):
     def render(self) -> Text:
         lines = CAT_ART.get(self.state, CAT_ART["IDLE"])
         if self.blink:
-            lines = [line.replace("o.o", "-.-").replace("@.@", "-.-").replace("^.^", "-.-").replace(";.;", "-.-") for line in lines]
+            for _eye in ("o.o", "@.@", "^.^", ";.;"):
+                lines = [line.replace(_eye, "-.-") for line in lines]
         if self.mouth_open and self.state == "SPEAKING":
             lines = [line.replace(">w<", ">o<") for line in lines]
         color = STATE_COLORS.get(self.state, CYAN)
@@ -382,9 +383,7 @@ class FaceApp(App):
             self.query_one("#chat", RichLog).write(
                 Text(f"👤 Tú: [📋 texto pegado, {len(full)} caracteres]", style=f"bold {GREEN}")
             )
-            self.query_one("#face", KaomojiFace).state = "THINKING"
-            self.query_one("#status-pill", StatusPill).state = "THINKING"
-            self.query_one("#response-bubble", ResponseBubble).message = "..."
+            self._set_ui_state("THINKING", "...")
             self.text_queue.put(full)
             return
         if typed:
@@ -398,10 +397,13 @@ class FaceApp(App):
                 self.query_one("#chat", RichLog).write(
                     Text(f"👤 Tú: {typed}", style=f"bold {GREEN}")
                 )
-            self.query_one("#face", KaomojiFace).state = "THINKING"
-            self.query_one("#status-pill", StatusPill).state = "THINKING"
-            self.query_one("#response-bubble", ResponseBubble).message = "..."
+            self._set_ui_state("THINKING", "...")
             self.text_queue.put(typed)
+
+    def _set_ui_state(self, state: str, bubble_msg: str = "...") -> None:
+        self.query_one("#face", KaomojiFace).state = state
+        self.query_one("#status-pill", StatusPill).state = state
+        self.query_one("#response-bubble", ResponseBubble).message = bubble_msg
 
     def _handle_big_paste(self, text: str) -> None:
         self._pasted_buffer = text
