@@ -8,7 +8,10 @@ services:
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-liquidai/lfm2.5-1.2b-instruct:latest}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       PIPER_MODEL_PATH: ${PIPER_MODEL_PATH:-/app/models/es_ES-sharvard-medium.onnx}
+      PIPER_SPEAKER: ${PIPER_SPEAKER:-1}
       VOSK_MODEL_PATH: ${VOSK_MODEL_PATH:-/app/models/vosk-model-es-0.42}
     volumes:
       - ./models:/app/models
