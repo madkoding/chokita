@@ -94,10 +94,10 @@ case "$(uname -s)" in
     Linux)
         if command -v apt-get >/dev/null 2>&1; then
             install_sysdeps apt-get "sudo apt-get install -y -qq" \
-                "build-essential portaudio19-dev libasound2-dev alsa-utils ffmpeg curl unzip"
+                "build-essential portaudio19-dev libasound2-dev alsa-utils ffmpeg curl unzip python3.12-dev"
         elif command -v dnf >/dev/null 2>&1; then
             install_sysdeps dnf "sudo dnf install -y" \
-                "gcc-c++ portaudio-devel alsa-lib-devel alsa-utils ffmpeg curl unzip"
+                "gcc-c++ portaudio-devel alsa-lib-devel alsa-utils ffmpeg curl unzip python3.12-devel"
         elif command -v pacman >/dev/null 2>&1; then
             install_sysdeps pacman "sudo pacman -S --needed --noconfirm" \
                 "base-devel portaudio alsa-lib alsa-utils ffmpeg curl unzip"
