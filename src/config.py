@@ -70,6 +70,14 @@ class Settings:
     # --- Memoria largo plazo ---
     # Extraer memorias episódicas cada N mensajes del usuario.
     memory_extract_interval: int = int(os.getenv("MEMORY_EXTRACT_INTERVAL", "10"))
+    # --- GC de RAG ---
+    # Cap duro de chunks (reflection + memory, soul nunca se poda).
+    rag_max_chunks: int = int(os.getenv("RAG_MAX_CHUNKS", "5000"))
+    # Días de retención por fuente de chunk.
+    rag_reflection_retention_days: int = int(os.getenv("RAG_REFLECTION_RETENTION_DAYS", "14"))
+    rag_memory_retention_days: int = int(os.getenv("RAG_MEMORY_RETENTION_DAYS", "90"))
+    # Paginas de WAL antes de autocheckpoint (default 1000 ≈ 4MB).
+    wal_autocheckpoint_pages: int = int(os.getenv("WAL_AUTOCHECKPOINT_PAGES", "1000"))
 
     # --- Contexto / compactación ---
     # Tamaño del contexto del modelo en tokens (ornith:9b = 256K).

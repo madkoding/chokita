@@ -254,3 +254,152 @@ def test_add_chunk_dedup(mem):
         mem.add_chunk("memory", "episode", "memoria diferente")
     rows = mem._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
     assert rows[0] == 3
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_ttl_reflection_old(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_reflection_retention_days = 1
+    mock_s.rag_memory_retention_days = 999
+    mock_s.rag_max_chunks = 10
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("reflection", "yo", "old reflection")
+    old_id = mem._conn.execute("SELECT id FROM chunks WHERE text='old reflection'").fetchone()[0]
+    with mem._lock:
+        mem._conn.execute("UPDATE chunks SET created_at=0 WHERE id=?", (old_id,))
+        mem._conn.commit()
+    result = mem.prune_chunks()
+    assert result["ttl_deleted"] >= 1
+    remaining = mem._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE text='old reflection'"
+    ).fetchone()[0]
+    assert remaining == 0
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_ttl_memory_old(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_reflection_retention_days = 999
+    mock_s.rag_memory_retention_days = 1
+    mock_s.rag_max_chunks = 10
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("memory", "episode", "old memory")
+    old_id = mem._conn.execute("SELECT id FROM chunks WHERE text='old memory'").fetchone()[0]
+    with mem._lock:
+        mem._conn.execute("UPDATE chunks SET created_at=0 WHERE id=?", (old_id,))
+        mem._conn.commit()
+    result = mem.prune_chunks()
+    assert result["ttl_deleted"] >= 1
+    remaining = mem._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE text='old memory'"
+    ).fetchone()[0]
+    assert remaining == 0
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_ttl_soul_never_deleted(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_reflection_retention_days = 1
+    mock_s.rag_memory_retention_days = 1
+    mock_s.rag_max_chunks = 10
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("soul", "soul", "old soul chunk")
+    old_id = mem._conn.execute("SELECT id FROM chunks WHERE text='old soul chunk'").fetchone()[0]
+    with mem._lock:
+        mem._conn.execute("UPDATE chunks SET created_at=0 WHERE id=?", (old_id,))
+        mem._conn.commit()
+    mem.prune_chunks()
+    remaining = mem._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE text='old soul chunk'"
+    ).fetchone()[0]
+    assert remaining == 1
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_cap_hard_limit(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_max_chunks = 3
+    mock_s.rag_reflection_retention_days = 999
+    mock_s.rag_memory_retention_days = 999
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        for i in range(5):
+            mem.add_chunk("reflection", "note", f"chunk {i}")
+    result = mem.prune_chunks()
+    assert result["cap_deleted"] == 2
+    count = mem._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    assert count == 3
+    remaining_texts = [
+        r[0] for r in mem._conn.execute("SELECT text FROM chunks ORDER BY id").fetchall()
+    ]
+    assert "chunk 0" not in remaining_texts
+    assert "chunk 1" not in remaining_texts
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_cap_keeps_soul(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_max_chunks = 2
+    mock_s.rag_reflection_retention_days = 999
+    mock_s.rag_memory_retention_days = 999
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("soul", "soul", "core soul")
+        mem.add_chunk("reflection", "note", "extra 1")
+        mem.add_chunk("reflection", "note", "extra 2")
+        mem.add_chunk("reflection", "note", "extra 3")
+    result = mem.prune_chunks()
+    assert result["cap_deleted"] == 1
+    soul_count = mem._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE source='soul'"
+    ).fetchone()[0]
+    assert soul_count == 1
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_resets_raptor_meta(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_reflection_retention_days = 1
+    mock_s.rag_memory_retention_days = 999
+    mock_s.rag_max_chunks = 10
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("reflection", "note", "to delete")
+    old_id = mem._conn.execute("SELECT id FROM chunks WHERE text='to delete'").fetchone()[0]
+    with mem._lock:
+        mem._conn.execute("UPDATE chunks SET created_at=0 WHERE id=?", (old_id,))
+        mem._conn.commit()
+    mem._set_meta("raptor_last_chunk_id", "99")
+    mem.prune_chunks()
+    assert mem._get_meta("raptor_last_chunk_id") == "0"
+
+
+@patch("src.memory.SETTINGS")
+@patch("src.memory.time")
+def test_prune_nothing_to_delete(mock_time, mock_s, mem):
+    mock_time.time.return_value = 1000000
+    mock_s.rag_max_chunks = 10
+    mock_s.rag_reflection_retention_days = 999
+    mock_s.rag_memory_retention_days = 999
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("reflection", "note", "keep me")
+    result = mem.prune_chunks()
+    assert result == {"ttl_deleted": 0, "cap_deleted": 0}
+
+
+def test_wal_checkpoint(mem):
+    from pathlib import Path
+    db_path = Path(mem._conn.execute("PRAGMA database_list").fetchone()[2])
+    wal_path = db_path.with_suffix(db_path.suffix + "-wal")
+    before = wal_path.stat().st_size if wal_path.exists() else 0
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        for i in range(100):
+            mem.add_chunk("reflection", "note", f"wal test chunk {i}")
+    after_write = wal_path.stat().st_size if wal_path.exists() else 0
+    mem.checkpoint()
+    after_checkpoint = wal_path.stat().st_size if wal_path.exists() else 0
+    assert after_write > before
+    assert after_checkpoint < after_write

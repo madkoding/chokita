@@ -59,6 +59,14 @@ class SleepThread(threading.Thread):
     def _dream_once(self) -> None:
         self.ui_queue.put({"type": "state", "state": "SLEEPING", "message": "Zzz... reindexando el alma (RAPTOR)"})
         self.ui_queue.put({"type": "log", "message": "🌙 Chokita se duerme y empieza a soñar con su RAG...", "dream": True})
+        pruned = self.memory.prune_chunks()
+        if pruned["ttl_deleted"] or pruned["cap_deleted"]:
+            self.ui_queue.put({
+                "type": "log",
+                "message": f"  🧹 GC: {pruned['ttl_deleted']} por antigüedad, {pruned['cap_deleted']} por límite.",
+                "dream": True,
+            })
+        self.memory.checkpoint()
         try:
             log = self.memory.build_raptor(self.summarize)
         except Exception:
@@ -68,5 +76,6 @@ class SleepThread(threading.Thread):
             self.ui_queue.put({"type": "log", "message": f"  💫 {line}", "dream": True})
         stats = self.memory.raptor_stats()
         self.ui_queue.put({"type": "log", "message": f"  🧠 RAPTOR: {stats}", "dream": True})
+        self.memory.checkpoint()
         self.ui_queue.put({"type": "state", "state": "IDLE", "message": "Despierta. Listo."})
         self.ui_queue.put({"type": "log", "message": "☀️ Chokita despierta.", "dream": True})

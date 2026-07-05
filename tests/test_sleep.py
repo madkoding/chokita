@@ -30,6 +30,8 @@ def _make_sleep(memory=None, summarize_fn=None, ui_queue=None, stop_event=None, 
 
 def test_dream_once_happy():
     sleep, memory, ui_queue = _make_sleep()
+    memory.prune_chunks = Mock(return_value={"ttl_deleted": 0, "cap_deleted": 0})
+    memory.checkpoint = Mock()
     sleep._dream_once()
     events = []
     while not ui_queue.empty():
@@ -38,10 +40,14 @@ def test_dream_once_happy():
     assert any(e["type"] == "state" and e["state"] == "IDLE" for e in events)
     assert any("Nivel 0" in str(e) for e in events)
     assert any("RAPTOR" in str(e) for e in events)
+    memory.prune_chunks.assert_called_once_with()
+    memory.checkpoint.assert_called()
 
 
 def test_dream_once_raptor_fails():
     memory = Mock()
+    memory.prune_chunks = Mock(return_value={"ttl_deleted": 0, "cap_deleted": 0})
+    memory.checkpoint = Mock()
     memory.build_raptor.side_effect = RuntimeError("raptor crash")
     sleep, _memory, ui_queue = _make_sleep(memory=memory)
     sleep._dream_once()

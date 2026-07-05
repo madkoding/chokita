@@ -76,6 +76,7 @@ class Memory:
         self._conn = sqlite3.connect(str(SETTINGS.db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute("PRAGMA synchronous=NORMAL;")
+        self._conn.execute(f"PRAGMA wal_autocheckpoint={SETTINGS.wal_autocheckpoint_pages};")
         self._conn.executescript(_SCHEMA)
         self._session_id: int | None = None
 
@@ -227,6 +228,45 @@ class Memory:
                 (source, kind, text, json.dumps(emb), time.time()),
             )
             self._conn.commit()
+
+    def prune_chunks(self) -> dict[str, int]:
+        """GC: TTL by source + hard cap. Never deletes source='soul'. Returns counts."""
+        now = time.time()
+        ttl = 0
+        cap = 0
+        with self._lock:
+            cutoff_reflection = now - SETTINGS.rag_reflection_retention_days * 86400
+            cur = self._conn.execute(
+                "DELETE FROM chunks WHERE source='reflection' AND created_at < ?",
+                (cutoff_reflection,),
+            )
+            ttl += cur.rowcount
+            cutoff_memory = now - SETTINGS.rag_memory_retention_days * 86400
+            cur = self._conn.execute(
+                "DELETE FROM chunks WHERE source='memory' AND created_at < ?",
+                (cutoff_memory,),
+            )
+            ttl += cur.rowcount
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM chunks WHERE source != 'soul'"
+            ).fetchone()
+            if row and row[0] > SETTINGS.rag_max_chunks:
+                excess = row[0] - SETTINGS.rag_max_chunks
+                self._conn.execute(
+                    "DELETE FROM chunks WHERE id IN ("
+                    "SELECT id FROM chunks WHERE source != 'soul' "
+                    "ORDER BY created_at ASC LIMIT ?)",
+                    (excess,),
+                )
+                cap = excess
+            if ttl or cap:
+                self._set_meta("raptor_last_chunk_id", "0")
+            self._conn.commit()
+        return {"ttl_deleted": ttl, "cap_deleted": cap}
+
+    def checkpoint(self) -> None:
+        with self._lock:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
 
     def seed_soul(self, soul_text: str) -> None:
         """Chunk SOUL.md by section (## headers) and embed each. Idempotent: clears old 'soul' chunks first."""

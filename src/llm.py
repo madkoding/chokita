@@ -254,6 +254,8 @@ class OllamaClient:
                 LOGGER.warning("Failed to store a memory chunk")
         if count:
             LOGGER.info("Extracted %d long-term memories from session", count)
+            self.memory.prune_chunks()
+            self.memory.checkpoint()
         return count
 
     def _build_system_prompt(self, user_message: str) -> str:

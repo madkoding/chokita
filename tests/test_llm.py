@@ -172,8 +172,12 @@ def test_extract_memories(mock_urlopen) -> None:
         {"role": "assistant", "content": "d"},
     ]
     mock_urlopen.return_value = DummyResponse("- le gusta programar\n- es paciente")
+    memory.prune_chunks = Mock(return_value={"ttl_deleted": 0, "cap_deleted": 0})
+    memory.checkpoint = Mock()
     count = client.extract_memories()
     assert count == 2
+    memory.prune_chunks.assert_called_once_with()
+    memory.checkpoint.assert_called_once_with()
 
 
 @patch("urllib.request.urlopen")
