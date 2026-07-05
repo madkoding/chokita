@@ -1,10 +1,11 @@
 """Ollama client with memory, RAG soul retrieval, and a tool-use loop.
 
 Flow per user turn:
-  1. Build system prompt: SOUL.md + RAG soul chunks + tools doc.
+  1. Build system prompt: SOUL.md + RAG soul chunks + tools doc + NDJSON format.
   2. Append history (window) + new user message.
-  3. Ask the model. If it emits a <tool> tag, execute it, append result, loop.
-  4. After max iterations or a normal reply, persist everything to memory.
+  3. Ask the model. Parse NDJSON lines (thinking/feeling/tool_call/response/memory).
+  4. If tool_call: execute tool, append result, loop.
+  5. After max iterations or a normal reply, persist everything to memory.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import functools
 import json
 import logging
 import queue
-import re
 import time
 import urllib.error
 import urllib.request
@@ -28,11 +28,47 @@ LOGGER = logging.getLogger(__name__)
 
 SOUL_PATH = Path(__file__).resolve().parent.parent / "SOUL.md"
 
-_TOOL_RE = re.compile(r"<tool>\s*(\{.*?\})\s*</tool>", re.DOTALL)
-TOOL_FORMAT_HINT = (
-    'Para usar una tool respondé con EXACTAMENTE: <tool>{"name":"read","args":{"path":"src/main.py"}}</tool>\n'
-    "y esperá el resultado antes de seguir. Si no necesitás tools, respondé normalmente."
+_NDJSON_TYPES = frozenset({"thinking", "feeling", "tool_call", "response", "memory"})
+
+NDJSON_FORMAT_HINT = (
+    "Respondé en líneas NDJSON. Una línea = un JSON con al menos \"type\".\n"
+    '  {"type":"thinking","content":"..."} — tu razonamiento interno\n'
+    '  {"type":"response","content":"..."} — tu respuesta al usuario\n'
+    '  {"type":"feeling","feeling":"curious"} — expresión emocional (opcional)\n'
+    '  {"type":"tool_call","name":"read","args":{"path":"..."}} — invocar tool\n'
+    '  {"type":"memory","content":"..."} — persistir un hecho a largo plazo (opcional)\n'
+    "Regla: response es para el usuario. tool_call ejecuta la tool. Sin tools, solo response."
 )
+
+
+def parse_model_line(line: str) -> dict | None:
+    """Parse a single NDJSON line from the model. Returns normalized dict or None (ignore)."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        obj = json.loads(stripped)
+    except json.JSONDecodeError:
+        return {"type": "response", "content": stripped}
+
+    t = obj.get("type", "")
+    if t == "thinking":
+        content = obj.get("content", "")
+        return {"type": "thinking", "content": content} if content else None
+    if t == "feeling":
+        feeling = obj.get("feeling", "")
+        return {"type": "feeling", "feeling": feeling} if feeling else None
+    if t == "tool_call":
+        name = obj.get("name", "")
+        args = obj.get("args", {}) or {}
+        return {"type": "tool_call", "name": name, "args": args} if name else None
+    if t == "response":
+        content = obj.get("content", "")
+        return {"type": "response", "content": content} if content else None
+    if t == "memory":
+        content = obj.get("content", "")
+        return {"type": "memory", "content": content} if content else None
+    return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -59,6 +95,7 @@ class OllamaClient:
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
         self._soul = load_soul_text()
+        self._ndjson_tool_calls: list[dict[str, Any]] = []
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -126,12 +163,12 @@ class OllamaClient:
         self._emit_tokens(messages)
 
         for _iter in range(SETTINGS.max_tool_iterations):
+            self._ndjson_tool_calls = []
             reply = self._raw_chat(messages, stream=_iter == 0)
             if reply is None:
                 return SETTINGS.ollama_fallback_message
 
-            tool_calls = _TOOL_RE.findall(reply)
-            if not tool_calls:
+            if not self._ndjson_tool_calls:
                 self.memory.add_message("assistant", reply)
                 self._emit_with_reply(messages, reply)
                 return reply
@@ -139,14 +176,9 @@ class OllamaClient:
             messages.append({"role": "assistant", "content": reply})
             self.memory.add_message("assistant", reply)
 
-            for tc in tool_calls:
-                try:
-                    call = json.loads(tc)
-                except json.JSONDecodeError:
-                    LOGGER.warning("Tool call JSON invalida: %s", tc)
-                    continue
-                name = call.get("name", "")
-                args = call.get("args", {}) or call.get("arguments", {})
+            for tc in self._ndjson_tool_calls:
+                name = tc["name"]
+                args = tc["args"]
                 result = call_tool(name, args)
                 self.memory.add_message("tool", result, tool_name=name, tool_args=args)
                 messages.append(
@@ -247,8 +279,40 @@ class OllamaClient:
 
         parts.append("\n\n## Tools disponibles")
         parts.append(TOOLS_DOC)
-        parts.append(TOOL_FORMAT_HINT)
+        parts.append(NDJSON_FORMAT_HINT)
         return "\n".join(parts)
+
+    def _emit_ndjson_event(self, parsed: dict, *, partial: bool) -> None:
+        if not self.ui_queue:
+            return
+        t = parsed["type"]
+        if t == "thinking":
+            self.ui_queue.put({"type": "thinking", "content": parsed["content"], "partial": partial})
+        elif t == "feeling":
+            self.ui_queue.put({"type": "feeling", "feeling": parsed["feeling"]})
+        elif t == "tool_call":
+            self.ui_queue.put({"type": "tool_call", "name": parsed["name"], "args": parsed["args"]})
+        elif t == "response":
+            self.ui_queue.put({"type": "response", "content": parsed["content"], "partial": partial})
+        elif t == "memory":
+            self.ui_queue.put({"type": "log", "message": f"🧠 {parsed['content'][:60]}"})
+
+    def _process_ndjson_line(self, parsed: dict, *, emit: bool) -> str | None:
+        """Return response content if type==response, None otherwise. Side-effects: tool_calls, memory."""
+        if parsed["type"] == "response":
+            return parsed["content"]
+        if parsed["type"] == "tool_call":
+            self._ndjson_tool_calls.append(parsed)
+            return None
+        if parsed["type"] == "memory":
+            try:
+                self.memory.add_chunk("memory", "episode", parsed["content"])
+            except Exception:
+                LOGGER.warning("Failed to store inline memory")
+            return None
+        if emit:
+            self._emit_ndjson_event(parsed, partial=True)
+        return None
 
     def _raw_chat(self, messages: list[dict[str, str]], stream: bool = False) -> str | None:
         url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/chat"
@@ -266,26 +330,13 @@ class OllamaClient:
                 if not stream:
                     body: dict[str, Any] = json.loads(resp.read())
                     text = body.get("message", {}).get("content", "").strip()
-                    return text or None
-                full: list[str] = []
-                buf = ""
-                for line in resp:
-                    line = line.decode().strip()
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    token = chunk.get("message", {}).get("content", "")
-                    full.append(token)
-                    buf += token
-                    if len(buf) >= 20 or chunk.get("done"):
-                        if self.ui_queue:
-                            self.ui_queue.put({"type": "token", "content": buf})
-                        buf = ""
-                    if chunk.get("done"):
-                        break
-                text = "".join(full).strip()
-                if text:
-                    return text
+                    result = self._parse_ndjson_text(text)
+                    if result is not None:
+                        return result
+                else:
+                    result = self._stream_ndjson(resp)
+                    if result is not None:
+                        return result
                 LOGGER.warning("Ollama returned empty content (attempt %d/%d)", attempt + 1, self.retries + 1)
             except (urllib.error.URLError, urllib.error.HTTPError) as exc:
                 LOGGER.error("Ollama error: %s", exc)
@@ -295,3 +346,57 @@ class OllamaClient:
             if attempt < self.retries:
                 time.sleep(self.retry_delay_seconds)
         return None
+
+    def _parse_ndjson_text(self, text: str) -> str | None:
+        """Parse a complete response as NDJSON. Returns concatenated response text or None."""
+        parts: list[str] = []
+        for raw_line in text.splitlines():
+            parsed = parse_model_line(raw_line)
+            if parsed is None:
+                continue
+            out = self._process_ndjson_line(parsed, emit=False)
+            if out is not None:
+                parts.append(out)
+        joined = "\n".join(parts).strip()
+        return joined or None
+
+    def _stream_ndjson(self, resp) -> str | None:
+        """Stream Ollama and parse NDJSON lines incrementally."""
+        parts: list[str] = []
+        line_buf = ""
+        self._ndjson_tool_calls = []
+        for ollama_line in resp:
+            raw = ollama_line.decode().strip()
+            if not raw:
+                continue
+            chunk = json.loads(raw)
+            token = chunk.get("message", {}).get("content", "")
+            if not token:
+                if chunk.get("done"):
+                    break
+                continue
+            line_buf += token
+            while "\n" in line_buf:
+                complete, line_buf = line_buf.split("\n", 1)
+                parsed = parse_model_line(complete)
+                if parsed is None:
+                    continue
+                out = self._process_ndjson_line(parsed, emit=True)
+                if out is not None:
+                    parts.append(out)
+        # Remaining buffer as response fallback
+        leftover = line_buf.strip()
+        if leftover:
+            parsed = parse_model_line(leftover)
+            if parsed and parsed["type"] == "response":
+                parts.append(parsed["content"])
+                self._emit_ndjson_event(parsed, partial=False)
+            elif parsed and parsed["type"] == "tool_call":
+                self._ndjson_tool_calls.append(parsed)
+                self._emit_ndjson_event(parsed, partial=False)
+            else:
+                parts.append(leftover)
+                if self.ui_queue:
+                    self.ui_queue.put({"type": "response", "content": leftover, "partial": False})
+        joined = "\n".join(parts).strip()
+        return joined or None

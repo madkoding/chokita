@@ -87,16 +87,31 @@ STATE_COLORS = {
     "SLEEPING": VIOLET,
 }
 
+FEELING_ART: dict[str, list[str]] = {
+    "neutral":     ["  /\\_/\\   ", " ( o.o )  ", "  > ^ <   "],
+    "curious":     ["  /\\_/\\   ", " ( @.@ )  ", "  > w <   "],
+    "happy":       ["  /\\_/\\   ", " ( ^.^ )  ", "  > w <   "],
+    "focused":     ["  /\\_/\\   ", " ( 0.0 )  ", "  > ^ <   "],
+    "confused":    ["  /\\_/\\   ", " ( o.o )? ", "  > ~ <   "],
+    "surprised":   ["  /\\_/\\   ", " ( O.O )  ", "  > o <   "],
+    "mischievous": ["  /\\_/\\   ", " ( >.> )  ", "  > ^ <   "],
+    "sleepy":      ["  /\\_/\\   ", " ( -.- )~ ", "  > ~ <   "],
+}
+
 
 class KaomojiFace(Static):
     state: reactive[str] = reactive("IDLE")
     blink: reactive[bool] = reactive(False)
     mouth_open: reactive[bool] = reactive(False)
+    feeling: reactive[str] = reactive("")
 
     def render(self) -> Text:
-        lines = CAT_ART.get(self.state, CAT_ART["IDLE"])
+        if self.feeling and self.feeling in FEELING_ART:
+            lines = list(FEELING_ART[self.feeling])
+        else:
+            lines = list(CAT_ART.get(self.state, CAT_ART["IDLE"]))
         if self.blink:
-            for _eye in ("o.o", "@.@", "^.^", ";.;"):
+            for _eye in ("o.o", "@.@", "^.^", ";.;", "0.0", "O.O", ">.>"):
                 lines = [line.replace(_eye, "-.-") for line in lines]
         if self.mouth_open and self.state == "SPEAKING":
             lines = [line.replace(">w<", ">o<") for line in lines]
@@ -355,8 +370,21 @@ class FaceApp(App):
                         )
                     else:
                         self.query_one("#chat", RichLog).write(msg)
-                elif event_type == "token":
-                    self.query_one("#response-bubble", ResponseBubble).message = event.get("content", "")
+                elif event_type == "thinking":
+                    content = event.get("content", "")
+                    if content:
+                        self.query_one("#chat", RichLog).write(
+                            Text(f"🤔 {content}", style=f"dim {YELLOW} italic")
+                        )
+                elif event_type == "feeling":
+                    f = event.get("feeling", "")
+                    if f:
+                        face = self.query_one("#face", KaomojiFace)
+                        face.feeling = f
+                elif event_type == "response":
+                    content = event.get("content", "")
+                    if content:
+                        self.query_one("#response-bubble", ResponseBubble).message = content
                 elif event_type == "audio_level":
                     self.query_one("#audio-level", AudioLevel).level = event.get("level", 0)
                 elif event_type == "shutdown":
