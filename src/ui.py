@@ -170,7 +170,7 @@ class _PasteAwareInput(Input):
         super().__init__(*args, **kwargs)
         self._on_big_paste = on_big_paste
 
-    def _on_paste(self, event: Any) -> None:
+    def on_paste(self, event: Any) -> None:
         text = getattr(event, "text", "")
         if not text:
             return
@@ -382,7 +382,9 @@ class FaceApp(App):
             self.query_one("#chat", RichLog).write(
                 Text(f"👤 Tú: [📋 texto pegado, {len(full)} caracteres]", style=f"bold {GREEN}")
             )
-            self._set_thinking()
+            self.query_one("#face", KaomojiFace).state = "THINKING"
+            self.query_one("#status-pill", StatusPill).state = "THINKING"
+            self.query_one("#response-bubble", ResponseBubble).message = "..."
             self.text_queue.put(full)
             return
         if typed:
@@ -396,13 +398,10 @@ class FaceApp(App):
                 self.query_one("#chat", RichLog).write(
                     Text(f"👤 Tú: {typed}", style=f"bold {GREEN}")
                 )
-            self._set_thinking()
+            self.query_one("#face", KaomojiFace).state = "THINKING"
+            self.query_one("#status-pill", StatusPill).state = "THINKING"
+            self.query_one("#response-bubble", ResponseBubble).message = "..."
             self.text_queue.put(typed)
-
-    def _set_thinking(self) -> None:
-        self.query_one("#face", KaomojiFace).state = "THINKING"
-        self.query_one("#status-pill", StatusPill).state = "THINKING"
-        self.query_one("#response-bubble", ResponseBubble).message = "..."
 
     def _handle_big_paste(self, text: str) -> None:
         self._pasted_buffer = text

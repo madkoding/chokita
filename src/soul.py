@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import threading
-import time
 from collections.abc import Callable
 
 from src.config import SETTINGS
 from src.memory import Memory
-from src.sleep import _slice_sleep
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,23 +39,16 @@ _SEEDS = [
     "¿Si pudiera cambiar una cosa de como hablo, cual seria?",
 ]
 
-_VOICES = {
-    "yo": (
-        "Soy el YO, el impulso crudo de Chokita. Hablo sin filtro, "
-        "lo que quiero, lo que me tienta, lo que me mueve. "
-        "Sin juicio, sin moral. Solo deseo."
-    ),
-    "superyo": (
-        "Soy el SUPERYO, el ideal de Chokita. Hablo de lo que deberia ser, "
-        "de las reglas que respetar, de cuando me traiciono a mi misma. "
-        "Exigente pero cariñosa."
-    ),
-    "ello": (
-        "Soy el ELLO, el mediador de Chokita. Observo al YO y al SUPERYO, "
-        "y propongo un ajuste concreto y pequeño para que mi alma sea mas "
-        "coherente sin romperse. Busco equilibrio, no victoria."
-    ),
-}
+_VOICES_SYSTEM = (
+    "Sos el alma de Chokita. Vas a responder como tres voces internas:\n"
+    "- YO (impulso crudo, deseo, instinto, sin filtro)\n"
+    "- SUPERYO (ideales, reglas, deber ser, autocritica)\n"
+    "- ELLO (mediador, equilibrio, ajuste concreto)\n\n"
+    "Respondé con ESTE FORMATO EXACTO:\n"
+    "[YO]: <texto del YO>\n[SUPERYO]: <texto del SUPERYO>\n[ELLO]: <texto del ELLO>"
+)
+
+_VOICE_RE = re.compile(r"\[(YO|SUPERYO|ELLO)\]:\s*(.*?)(?=\n\[|\Z)", re.DOTALL)
 
 _SYNTH_PROMPT = (
     "A partir de las tres voces anteriores, escribi una unica nota breve "
@@ -84,15 +76,15 @@ class SoulThread(threading.Thread):
 
     def run(self) -> None:
         while not self.stop_event.is_set():
-            # wait idle threshold
+            # wait idle threshold (responsive to stop)
             if self._last_activity() < SETTINGS.soul_idle_threshold_seconds:
-                time.sleep(SETTINGS.soul_idle_threshold_seconds)
+                if self.stop_event.wait(timeout=SETTINGS.soul_idle_threshold_seconds):
+                    break
                 continue
-            # sleep random interval 5-15 min
             delay = random.uniform(
                 SETTINGS.soul_reflect_min_seconds, SETTINGS.soul_reflect_max_seconds
             )
-            if _slice_sleep(self.stop_event, delay):
+            if self.stop_event.wait(timeout=delay):
                 break
             if self.stop_event.is_set():
                 break
@@ -106,21 +98,28 @@ class SoulThread(threading.Thread):
         LOGGER.info("Soul reflection seed: %s", seed)
         context = self._build_context(seed)
         voices: dict[str, str] = {}
-        for voice, sysp in _VOICES.items():
-            msgs = [
-                {"role": "system", "content": sysp},
-                {"role": "user", "content": context},
-            ]
-            try:
-                text = self.chat(msgs).strip()
-            except Exception:
-                LOGGER.warning("Voice %s raised", voice)
-                return
-            if not text:
-                # ponytail: model timed out or returned empty — abort without polluting the RAG.
-                LOGGER.warning("Voice %s empty (model unavailable?), skipping reflection", voice)
-                return
-            voices[voice] = text[: SETTINGS.soul_reflect_max_chars]
+
+        # Single call: ask the model for all 3 voices at once.
+        msgs = [
+            {"role": "system", "content": _VOICES_SYSTEM},
+            {"role": "user", "content": context},
+        ]
+        try:
+            raw = self.chat(msgs)
+        except Exception:
+            LOGGER.warning("Voices batch raised")
+            return
+        if not raw:
+            LOGGER.warning("Voices batch empty, skipping reflection")
+            return
+        for match in _VOICE_RE.finditer(raw):
+            tag, text = match.group(1), match.group(2).strip()
+            key = tag.lower()
+            voices[key] = text[: SETTINGS.soul_reflect_max_chars]
+
+        if len(voices) < 3:
+            LOGGER.warning("Only got %d/3 voices, skipping reflection", len(voices))
+            return
 
         # store each voice as a chunk
         for voice, text in voices.items():

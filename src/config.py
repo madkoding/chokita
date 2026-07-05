@@ -8,7 +8,6 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    ollama_chat_path: str = os.getenv("OLLAMA_CHAT_PATH", "/api/chat")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "liquidai/lfm2.5-1.2b-instruct:latest")
     ollama_timeout_seconds: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
     ollama_fallback_message: str = os.getenv(
@@ -35,7 +34,6 @@ class Settings:
         "CHOKITA_DB_PATH",
         str(Path.home() / ".local/share/chokita/chokita.db"),
     ))
-    ollama_embed_path: str = os.getenv("OLLAMA_EMBED_PATH", "/api/embeddings")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "6"))
     # Historial de mensajes por sesión (ventana deslizante)

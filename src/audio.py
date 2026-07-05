@@ -136,18 +136,23 @@ class SpeechRecognizerThread(threading.Thread):
         self._notify("LISTENING", "Escuchando...")
 
         wake_at: float = 0.0  # timestamp of last bare "chokita" wake (0 = none pending)
+        _last_level = -1
         try:
             while not self.stop_event.is_set():
                 chunk = stream.read(SETTINGS.audio_chunk_size, exception_on_overflow=False)
                 if self.mute_event.is_set():
-                    self.ui_queue.put({"type": "audio_level", "level": 0})
+                    if _last_level != 0:
+                        self.ui_queue.put({"type": "audio_level", "level": 0})
+                        _last_level = 0
                     continue
                 count = len(chunk) // 2
                 if count:
                     shorts = struct.unpack(f"<{count}h", chunk)
                     rms = (sum(s * s for s in shorts) / count) ** 0.5
                     level = min(int((rms / 32768) ** 0.5 * 20), 20)
-                    self.ui_queue.put({"type": "audio_level", "level": level})
+                    if level != _last_level:
+                        self.ui_queue.put({"type": "audio_level", "level": level})
+                        _last_level = level
                     if level > 0:
                         LOGGER.debug("Audio level: %d (rms: %.0f)", level, rms)
                 if recognizer.AcceptWaveform(chunk):

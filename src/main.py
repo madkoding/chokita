@@ -11,7 +11,7 @@ from typing import Any
 
 from src.audio import SpeechRecognizerThread
 from src.config import SETTINGS
-from src.llm import OllamaClient
+from src.llm import OllamaClient, load_soul_text
 from src.memory import Memory
 from src.sleep import SleepThread
 from src.soul import SoulThread
@@ -81,8 +81,8 @@ def assistant_loop(
     abort_event: threading.Event,
     tts: PiperTTS,
     mute_event: threading.Event,
+    llm: OllamaClient,
 ) -> None:
-    llm = OllamaClient(memory=memory, ui_queue=ui_queue)
 
     while not stop_event.is_set():
         try:
@@ -125,49 +125,18 @@ def assistant_loop(
             ui_queue.put({"type": "log", "message": str(exc)})
 
 
-def _headless_loop(
-    text_queue: queue.Queue[str],
-    ui_queue: queue.Queue[dict[str, Any]],
-    stop_event: threading.Event,
-) -> None:
-    def _stdin_reader() -> None:
-        for line in sys.stdin:
-            line = line.strip()
-            if line:
-                text_queue.put(line)
-
-    reader = threading.Thread(target=_stdin_reader, daemon=True, name="stdin-reader")
-    reader.start()
-
-    while not stop_event.is_set():
-        try:
-            event = ui_queue.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        if event.get("type") == "shutdown":
-            break
-        if event.get("type") == "state":
-            print(f"[{event['state']}] {event.get('message', '')}", flush=True)
-
-
 def _has_microphone() -> bool:
-    import os as _os
+    import contextlib
 
-    _saved = _os.dup(2)
-    _dn = _os.open(_os.devnull, _os.O_WRONLY)
-    _os.dup2(_dn, 2)
-    _os.close(_dn)
-    try:
-        import pyaudio
-        p = pyaudio.PyAudio()
-        info = p.get_default_input_device_info()
-        p.terminate()
-        return info["maxInputChannels"] > 0
-    except Exception:
-        return False
-    finally:
-        _os.dup2(_saved, 2)
-        _os.close(_saved)
+    with contextlib.redirect_stderr(None):
+        try:
+            import pyaudio
+            p = pyaudio.PyAudio()
+            info = p.get_default_input_device_info()
+            p.terminate()
+            return info["maxInputChannels"] > 0
+        except Exception:
+            return False
 
 
 def main() -> None:
@@ -178,6 +147,11 @@ def main() -> None:
     # Memory + session
     memory = Memory()
     memory.start_session()
+    # Seed SOUL.md into RAG once (not per OllamaClient instance).
+    try:
+        memory.seed_soul(load_soul_text())
+    except Exception:
+        LOGGER.warning("No se pudo seedear SOUL en RAG (¿embed model cargado?)")
     print(f"✓ Memoria SQLite: {SETTINGS.db_path}", flush=True)
 
     # Import FaceApp BEFORE starting STT thread — pyaudio's import lock
@@ -223,23 +197,22 @@ def main() -> None:
 
     threading.Thread(target=_start_stt, daemon=True, name="stt-launcher").start()
 
+    llm = OllamaClient(memory=memory, ui_queue=ui_queue)
     worker_thread = threading.Thread(
         target=assistant_loop,
-        args=(text_queue, ui_queue, stop_event, memory, abort_event, tts, mute_event),
+        args=(text_queue, ui_queue, stop_event, memory, abort_event, tts, mute_event, llm),
         daemon=True,
         name="assistant-loop",
     )
     worker_thread.start()
 
-    # Soul reflection thread: idle musings on her own personality.
-    # Build a lightweight chat fn that calls Ollama directly (no tools, no memory writes).
-    def _soul_chat(messages: list[dict[str, str]]) -> str:
-        client = OllamaClient(memory=memory)
-        return client.chat_raw(messages)
+    # Single shared client for soul reflection + REM summarization (no tools, no memory writes).
+    _aux_llm = OllamaClient(memory=memory)
 
+    # Soul reflection thread: idle musings on her own personality.
     soul_thread = SoulThread(
         memory=memory,
-        chat_fn=_soul_chat,
+        chat_fn=_aux_llm.chat_raw,
         stop_event=stop_event,
         activity_fn=_seconds_idle,
     )
@@ -253,8 +226,7 @@ def main() -> None:
 
     # REM sleep thread: reindexes the RAG (RAPTOR) while idle.
     def _summarize(text: str) -> str:
-        client = OllamaClient(memory=memory)
-        return client.chat_raw(
+        return _aux_llm.chat_raw(
             [
                 {"role": "system", "content": "Resumí los siguientes puntos en 2-3 lineas, en español rioplatense."},
                 {"role": "user", "content": text},
@@ -282,8 +254,8 @@ def main() -> None:
         app = FaceApp(text_queue, ui_queue)
         app.run()
     except Exception as exc:
-        LOGGER.warning("TUI no disponible (%s), modo headless", exc)
-        _headless_loop(text_queue, ui_queue, stop_event)
+        LOGGER.critical("TUI no disponible: %s", exc)
+        raise
 
     stop_event.set()
     if stt_thread:
@@ -293,7 +265,6 @@ def main() -> None:
     sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
     # Final long-term memory extraction before closing.
     try:
-        llm = OllamaClient(memory=memory)
         llm.extract_memories()
     except Exception:
         LOGGER.warning("Final memory extraction failed")

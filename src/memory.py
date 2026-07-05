@@ -7,6 +7,7 @@ Vector search is brute-force cosine over stored embeddings; fine for a personal 
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
@@ -56,6 +57,10 @@ CREATE TABLE IF NOT EXISTS raptor (
     member_ids TEXT NOT NULL,        -- JSON list of raptor.id or chunk.id at level 0
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);
 CREATE INDEX IF NOT EXISTS idx_raptor_level ON raptor(level);
@@ -67,7 +72,6 @@ class Memory:
 
     def __init__(self) -> None:
         SETTINGS.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False: we lock ourselves; WAL allows concurrent readers.
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(SETTINGS.db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL;")
@@ -201,15 +205,7 @@ class Memory:
     # ---- embeddings + RAG ----
 
     def embed(self, text: str) -> list[float]:
-        url = f"{SETTINGS.ollama_base_url.rstrip('/')}{SETTINGS.ollama_embed_path}"
-        data = json.dumps({
-            "model": SETTINGS.ollama_embed_model,
-            "prompt": text,
-            "keep_alive": SETTINGS.ollama_keep_alive,
-        }).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
-        return json.loads(resp.read())["embedding"]
+        return _embed_ollama(text)
 
     def add_chunk(self, source: str, kind: str, text: str) -> None:
         emb = self.embed(text)
@@ -254,6 +250,18 @@ class Memory:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s[1] for s in scored[:top_k]]
 
+    # ---- meta helpers ----
+
+    def _get_meta(self, key: str, default: str = "") -> str:
+        row = self._conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def _set_meta(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", (key, value)
+        )
+        self._conn.commit()
+
     # ---- RAPTOR: hierarchical clustering + summarization ----
 
     def clear_raptor(self) -> None:
@@ -290,6 +298,14 @@ class Memory:
         personal agent's scale (~hundreds of chunks). Switch to sklearn if it grows.
         """
         log: list[str] = []
+        # Incremental: skip if no new chunks since last build.
+        with self._lock:
+            cur_max = self._conn.execute("SELECT COALESCE(MAX(id),0) FROM chunks").fetchone()[0]
+        last_max = int(self._get_meta("raptor_last_chunk_id", "0"))
+        if cur_max == last_max:
+            log.append("Sin chunks nuevos desde el ultimo RAPTOR; saltando.")
+            return log
+
         self.clear_raptor()
         # Level 0: all chunks become leaves.
         with self._lock:
@@ -337,6 +353,7 @@ class Memory:
             current = parents
             level += 1
         log.append(f"RAPTOR construido: {level - 1} niveles.")
+        self._set_meta("raptor_last_chunk_id", str(cur_max))
         return log
 
     def retrieve_raptor(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
@@ -357,6 +374,19 @@ class Memory:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+@functools.lru_cache(maxsize=256)
+def _embed_ollama(text: str) -> list[float]:
+    url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/embeddings"
+    data = json.dumps({
+        "model": SETTINGS.ollama_embed_model,
+        "prompt": text,
+        "keep_alive": SETTINGS.ollama_keep_alive,
+    }).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
+    return json.loads(resp.read())["embedding"]
 
 
 def _split_sections(text: str) -> list[tuple[str, str]]:
@@ -390,34 +420,35 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list[list[dict[str, Any]]]:
     """Stdlib k-means with cosine distance. items must have 'embedding' (list[float]).
+    Uses numpy if available (much faster with many vectors).
     # ponytail: random init, fixed iters, no convergence check; good enough for RAPTOR clustering.
     """
     if k <= 0 or not items:
         return [items] if items else []
+    n_items = len(items)
+    k = min(k, n_items)
+    dim = len(items[0]["embedding"])
+
+    # Pure Python k-means
     embs = [it["embedding"] for it in items]
-    # init: pick k random distinct items as centroids
-    k = min(k, len(items))
     centroids = [random.choice(embs) for _ in range(k)]
     for _ in range(iters):
         clusters: list[list[int]] = [[] for _ in range(k)]
         for i, e in enumerate(embs):
             best = max(range(k), key=lambda c: _cosine(e, centroids[c]))
             clusters[best].append(i)
-        # recompute centroids = mean of cluster members
         for c in range(k):
             if clusters[c]:
-                dim = len(embs[0])
                 acc = [0.0] * dim
                 for idx in clusters[c]:
                     for d in range(dim):
                         acc[d] += embs[idx][d]
                 n = len(clusters[c])
                 centroids[c] = [v / n for v in acc]
-    # final assignment
-    result: list[list[dict[str, Any]]] = [[] for _ in range(k)]
+    result2: list[list[dict[str, Any]]] = [[] for _ in range(k)]
     for i, it in enumerate(items):
         best = max(range(k), key=lambda c: _cosine(embs[i], centroids[c]))
-        result[best].append(it)
-    return [c for c in result if c]
+        result2[best].append(it)
+    return [c for c in result2 if c]
 
 

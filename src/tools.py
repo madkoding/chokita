@@ -109,46 +109,30 @@ def _bash(command: str) -> str:
         return "Error: timeout 30s"
 
 
-_TOOLS: dict[str, dict[str, Any]] = {
-    "read": {
-        "fn": _read,
-        "params": {"path": "str", "offset": "int=0", "limit": "int=200"},
-        "desc": "Leer un archivo de texto del workdir.",
-    },
-    "list": {
-        "fn": _list_dir,
-        "params": {"path": "str=."},
-        "desc": "Listar entradas de un directorio del workdir.",
-    },
-    "glob": {
-        "fn": _glob_files,
-        "params": {"pattern": "str"},
-        "desc": "Buscar archivos por patron glob desde la raiz del workdir.",
-    },
-    "grep": {
-        "fn": _grep,
-        "params": {"pattern": "str", "include": "str=*"},
-        "desc": "Buscar contenido por regex en archivos del workdir.",
-    },
-    "write": {
-        "fn": _write,
-        "params": {"path": "str", "content": "str"},
-        "desc": "Escribir/crear un archivo en el workdir.",
-    },
-    "bash": {
-        "fn": _bash,
-        "params": {"command": "str"},
-        "desc": "Ejecutar un comando shell en el workdir (timeout 30s).",
-    },
+_TOOLS: dict[str, Any] = {
+    "read": _read,
+    "list": _list_dir,
+    "glob": _glob_files,
+    "grep": _grep,
+    "write": _write,
+    "bash": _bash,
 }
+
+_TOOLS_DOC = """\
+- read(path: str, offset: int=0, limit: int=200): Leer un archivo de texto del workdir.
+- list(path: str=.): Listar entradas de un directorio del workdir.
+- glob(pattern: str): Buscar archivos por patron glob desde la raiz del workdir.
+- grep(pattern: str, include: str=*): Buscar contenido por regex en archivos del workdir.
+- write(path: str, content: str): Escribir/crear un archivo en el workdir.
+- bash(command: str): Ejecutar un comando shell en el workdir (timeout 30s)."""
 
 
 def call_tool(name: str, args: dict[str, Any]) -> str:
-    t = _TOOLS.get(name)
-    if not t:
+    fn = _TOOLS.get(name)
+    if not fn:
         return f"Error: tool desconocida '{name}'"
     try:
-        return t["fn"](**args)
+        return fn(**args)
     except PermissionError as e:
         return f"Error: {e}"
     except Exception as e:
@@ -156,8 +140,4 @@ def call_tool(name: str, args: dict[str, Any]) -> str:
 
 
 def tools_system_doc() -> str:
-    lines = []
-    for name, t in _TOOLS.items():
-        params = ", ".join(f"{k}: {v}" for k, v in t["params"].items())
-        lines.append(f"- {name}({params}): {t['desc']}")
-    return "\n".join(lines)
+    return _TOOLS_DOC

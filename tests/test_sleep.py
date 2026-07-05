@@ -2,10 +2,10 @@ import queue
 import threading
 from unittest.mock import Mock
 
-from src.sleep import SleepThread, _slice_sleep
+from src.sleep import SleepThread
 
 
-def _make_sleep(memory=None, summarize_fn=None, ui_queue=None, stop_event=None):
+def _make_sleep(memory=None, summarize_fn=None, ui_queue=None, stop_event=None, activity_fn=None):
     if memory is None:
         memory = Mock()
         memory.build_raptor.return_value = ["Nivel 0: 5 hojas", "Nivel 1: 2 clusters"]
@@ -16,7 +16,8 @@ def _make_sleep(memory=None, summarize_fn=None, ui_queue=None, stop_event=None):
         ui_queue = queue.Queue()
     if stop_event is None:
         stop_event = threading.Event()
-    activity_fn = Mock(return_value=999.0)
+    if activity_fn is None:
+        activity_fn = Mock(return_value=999.0)
     sleep = SleepThread(
         memory=memory,
         summarize_fn=summarize_fn,
@@ -55,11 +56,21 @@ def test_dream_once_raptor_fails():
 def test_slice_sleep_stop():
     stop = threading.Event()
     stop.set()
-    result = _slice_sleep(stop, 10.0)
+    result = stop.wait(timeout=10.0)
     assert result is True
 
 
 def test_slice_sleep_completes():
     stop = threading.Event()
-    result = _slice_sleep(stop, 0.01)
+    result = stop.wait(timeout=0.01)
     assert result is False
+
+
+def test_run_stops_when_signaled():
+    stop = threading.Event()
+    stop.set()
+    sleep, _memory, _ui_queue = _make_sleep(stop_event=stop)
+    sleep.run()
+
+
+

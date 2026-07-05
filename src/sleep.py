@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -20,15 +19,6 @@ from src.config import SETTINGS
 from src.memory import Memory
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _slice_sleep(stop_event: threading.Event, seconds: float) -> bool:
-    end = time.time() + seconds
-    while time.time() < end:
-        if stop_event.is_set():
-            return True
-        time.sleep(min(1.0, end - time.time()))
-    return False
 
 
 class SleepThread(threading.Thread):
@@ -51,12 +41,11 @@ class SleepThread(threading.Thread):
 
     def run(self) -> None:
         while not self.stop_event.is_set():
-            # Wait until idle threshold is reached.
             if self._last_activity() < SETTINGS.rem_idle_threshold_seconds:
-                time.sleep(SETTINGS.rem_idle_threshold_seconds)
+                if self.stop_event.wait(timeout=SETTINGS.rem_idle_threshold_seconds):
+                    break
                 continue
-            # Sleep the raptor interval in slices (responsive to stop).
-            if _slice_sleep(self.stop_event, SETTINGS.rem_raptor_interval_seconds):
+            if self.stop_event.wait(timeout=SETTINGS.rem_raptor_interval_seconds):
                 break
             if self.stop_event.is_set():
                 break
@@ -68,22 +57,16 @@ class SleepThread(threading.Thread):
                 LOGGER.exception("REM sleep failed")
 
     def _dream_once(self) -> None:
-        self._emit_state("SLEEPING", "Zzz... reindexando el alma (RAPTOR)")
-        self._emit_log("🌙 Chokita se duerme y empieza a soñar con su RAG...", dream=True)
+        self.ui_queue.put({"type": "state", "state": "SLEEPING", "message": "Zzz... reindexando el alma (RAPTOR)"})
+        self.ui_queue.put({"type": "log", "message": "🌙 Chokita se duerme y empieza a soñar con su RAG...", "dream": True})
         try:
             log = self.memory.build_raptor(self.summarize)
         except Exception:
-            self._emit_state("IDLE", "No pude dormir bien; vuelvo a idle.")
+            self.ui_queue.put({"type": "state", "state": "IDLE", "message": "No pude dormir bien; vuelvo a idle."})
             return
         for line in log:
-            self._emit_log(f"  💫 {line}", dream=True)
+            self.ui_queue.put({"type": "log", "message": f"  💫 {line}", "dream": True})
         stats = self.memory.raptor_stats()
-        self._emit_log(f"  🧠 RAPTOR: {stats}", dream=True)
-        self._emit_state("IDLE", "Despierta. Listo.")
-        self._emit_log("☀️ Chokita despierta.", dream=True)
-
-    def _emit_state(self, state: str, message: str) -> None:
-        self.ui_queue.put({"type": "state", "state": state, "message": message})
-
-    def _emit_log(self, message: str, dream: bool = False) -> None:
-        self.ui_queue.put({"type": "log", "message": message, "dream": dream})
+        self.ui_queue.put({"type": "log", "message": f"  🧠 RAPTOR: {stats}", "dream": True})
+        self.ui_queue.put({"type": "state", "state": "IDLE", "message": "Despierta. Listo."})
+        self.ui_queue.put({"type": "log", "message": "☀️ Chokita despierta.", "dream": True})

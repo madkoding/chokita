@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -20,6 +21,21 @@ PLAYBACK_POWERSHELL = "powershell"
 PLAYBACK_AUTO = "auto"
 
 
+def _available_playback_cmds() -> list[list[str]]:
+    attempts: list[list[str]] = []
+    if shutil.which(PLAYBACK_AFPLAY):
+        attempts.append([PLAYBACK_AFPLAY])
+    if shutil.which(PLAYBACK_PAPLAY):
+        attempts.append([PLAYBACK_PAPLAY])
+    if shutil.which(PLAYBACK_APLAY):
+        attempts.append([PLAYBACK_APLAY, "-q"])
+    if shutil.which(PLAYBACK_FFPLAY):
+        attempts.append([PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp"])
+    if shutil.which("powershell.exe"):
+        attempts.append(["__powershell__"])
+    return attempts
+
+
 class PiperTTS:
     def __init__(self) -> None:
         self.playback_cmd = SETTINGS.playback_command
@@ -29,8 +45,10 @@ class PiperTTS:
 
     def _get_voice(self) -> Any:
         if self._voice is None:
-            from piper import PiperVoice
-            self._voice = PiperVoice.load(str(SETTINGS.piper_model_path))
+            with self._lock:
+                if self._voice is None:
+                    from piper import PiperVoice
+                    self._voice = PiperVoice.load(str(SETTINGS.piper_model_path))
         return self._voice
 
     def stop(self) -> None:
@@ -68,19 +86,7 @@ class PiperTTS:
         if self.playback_cmd != PLAYBACK_AUTO:
             raise RuntimeError(f"Unsupported playback command: {self.playback_cmd}")
 
-        import shutil
-        attempts: list[list[str]] = []
-        if shutil.which(PLAYBACK_AFPLAY):
-            attempts.append([PLAYBACK_AFPLAY, str(wav_path)])
-        if shutil.which(PLAYBACK_PAPLAY):
-            attempts.append([PLAYBACK_PAPLAY, str(wav_path)])
-        if shutil.which(PLAYBACK_APLAY):
-            attempts.append([PLAYBACK_APLAY, "-q", str(wav_path)])
-        if shutil.which(PLAYBACK_FFPLAY):
-            attempts.append([PLAYBACK_FFPLAY, "-v", "quiet", "-autoexit", "-nodisp", str(wav_path)])
-        if shutil.which("powershell.exe"):
-            attempts.append(["__powershell__", str(wav_path)])
-
+        attempts = _available_playback_cmds()
         if not attempts:
             raise RuntimeError("No playback binary available (aplay/ffplay/powershell)")
 
@@ -88,9 +94,9 @@ class PiperTTS:
         for cmd in attempts:
             try:
                 if cmd[0] == "__powershell__":
-                    self._play_via_powershell(Path(cmd[1]))
+                    self._play_via_powershell(wav_path)
                 else:
-                    self._run_playback(cmd)
+                    self._run_playback([*cmd, str(wav_path)])
                 return
             except subprocess.CalledProcessError as e:
                 last_error = e

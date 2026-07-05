@@ -9,6 +9,7 @@ Flow per user turn:
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import queue
@@ -34,7 +35,8 @@ TOOL_FORMAT_HINT = (
 )
 
 
-def _load_soul() -> str:
+@functools.lru_cache(maxsize=1)
+def load_soul_text() -> str:
     try:
         return SOUL_PATH.read_text(encoding="utf-8")
     except Exception:
@@ -56,13 +58,7 @@ class OllamaClient:
         self.ui_queue = ui_queue
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
-        self._soul = _load_soul()
-        # Seed RAG with SOUL.md sections on first run.
-        if self._soul:
-            try:
-                self.memory.seed_soul(self._soul)
-            except Exception:
-                LOGGER.warning("No se pudo seedear SOUL en RAG (¿embed model cargado?)")
+        self._soul = load_soul_text()
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -127,10 +123,7 @@ class OllamaClient:
         self._emit_tokens(messages)
 
         for _iter in range(SETTINGS.max_tool_iterations):
-            if _iter == 0:
-                reply = self._raw_chat_stream(messages)
-            else:
-                reply = self._raw_chat(messages)
+            reply = self._raw_chat(messages, stream=_iter == 0)
             if reply is None:
                 return SETTINGS.ollama_fallback_message
 
@@ -254,11 +247,11 @@ class OllamaClient:
         parts.append(TOOL_FORMAT_HINT)
         return "\n".join(parts)
 
-    def _raw_chat(self, messages: list[dict[str, str]]) -> str | None:
-        url = f"{SETTINGS.ollama_base_url.rstrip('/')}{SETTINGS.ollama_chat_path}"
+    def _raw_chat(self, messages: list[dict[str, str]], stream: bool = False) -> str | None:
+        url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/chat"
         payload = {
             "model": SETTINGS.ollama_model,
-            "stream": False,
+            "stream": stream,
             "keep_alive": SETTINGS.ollama_keep_alive,
             "messages": messages,
         }
@@ -267,35 +260,10 @@ class OllamaClient:
             try:
                 req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
                 resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
-                body: dict[str, Any] = json.loads(resp.read())
-                msg = body.get("message", {})
-                text = msg.get("content", "").strip()
-                if not text:
-                    LOGGER.warning("Ollama returned empty content (attempt %d/%d)", attempt + 1, self.retries + 1)
-                else:
-                    return text
-            except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                LOGGER.error("Ollama error: %s", exc)
-            except Exception as exc:
-                LOGGER.exception("Unexpected Ollama error: %s", exc)
-
-            if attempt < self.retries:
-                time.sleep(self.retry_delay_seconds)
-        return None
-
-    def _raw_chat_stream(self, messages: list[dict[str, str]]) -> str | None:
-        url = f"{SETTINGS.ollama_base_url.rstrip('/')}{SETTINGS.ollama_chat_path}"
-        payload = {
-            "model": SETTINGS.ollama_model,
-            "stream": True,
-            "keep_alive": SETTINGS.ollama_keep_alive,
-            "messages": messages,
-        }
-        data = json.dumps(payload).encode()
-        for attempt in range(self.retries + 1):
-            try:
-                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-                resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
+                if not stream:
+                    body: dict[str, Any] = json.loads(resp.read())
+                    text = body.get("message", {}).get("content", "").strip()
+                    return text or None
                 full: list[str] = []
                 buf = ""
                 for line in resp:
@@ -313,14 +281,13 @@ class OllamaClient:
                     if chunk.get("done"):
                         break
                 text = "".join(full).strip()
-                if not text:
-                    LOGGER.warning("Ollama returned empty stream (attempt %d/%d)", attempt + 1, self.retries + 1)
-                else:
+                if text:
                     return text
+                LOGGER.warning("Ollama returned empty content (attempt %d/%d)", attempt + 1, self.retries + 1)
             except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-                LOGGER.error("Ollama stream error: %s", exc)
+                LOGGER.error("Ollama error: %s", exc)
             except Exception as exc:
-                LOGGER.exception("Unexpected Ollama stream error: %s", exc)
+                LOGGER.exception("Unexpected Ollama error: %s", exc)
 
             if attempt < self.retries:
                 time.sleep(self.retry_delay_seconds)
