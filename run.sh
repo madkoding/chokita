@@ -54,7 +54,6 @@ else
     fi
 fi
 
-# Asegurar pip dentro del venv
 if [ ! -f .venv/bin/pip ]; then
     .venv/bin/python -m ensurepip --upgrade >/dev/null 2>&1 || {
         warn "pip no disponible via ensurepip."
@@ -63,7 +62,7 @@ if [ ! -f .venv/bin/pip ]; then
     ok "pip instalado en el venv."
 fi
 
-# --- 3. Deps del sistema ---
+# --- 3. Deps del sistema (solo ffmpeg + curl + unzip) ---
 install_sysdeps() {
     local pm="$1" install_cmd="$2" pkgs="$3"
     local missing=""
@@ -87,52 +86,26 @@ install_sysdeps() {
 }
 
 case "$(uname -s)" in
-    Darwin)
-        command -v brew >/dev/null 2>&1 || error "Homebrew no instalado: https://brew.sh"
-        install_sysdeps brew "brew install" "portaudio ffmpeg curl unzip"
-        ;;
     Linux)
         if command -v apt-get >/dev/null 2>&1; then
             install_sysdeps apt-get "sudo apt-get install -y -qq" \
-                "build-essential portaudio19-dev libasound2-dev alsa-utils ffmpeg curl unzip python3.12-dev libasound2-plugins"
+                "build-essential ffmpeg curl unzip python3.12-dev zstd"
         elif command -v dnf >/dev/null 2>&1; then
             install_sysdeps dnf "sudo dnf install -y" \
-                "gcc-c++ portaudio-devel alsa-lib-devel alsa-utils ffmpeg curl unzip python3.12-devel"
+                "gcc-c++ ffmpeg curl unzip python3.12-devel zstd"
         elif command -v pacman >/dev/null 2>&1; then
             install_sysdeps pacman "sudo pacman -S --needed --noconfirm" \
-                "base-devel portaudio alsa-lib alsa-utils ffmpeg curl unzip"
+                "base-devel ffmpeg curl unzip zstd"
         else
             warn "No se detecto gestor de paquetes (apt/dnf/pacman)."
-            warn "Instala manualmente: build-essential/gcc-c++, portaudio, alsa, ffmpeg, curl, unzip"
+            warn "Instala manualmente: build-essential/gcc-c++, ffmpeg, curl, unzip, zstd"
         fi
         ;;
+    Darwin)
+        command -v brew >/dev/null 2>&1 || error "Homebrew no instalado: https://brew.sh"
+        install_sysdeps brew "brew install" "ffmpeg curl unzip zstd"
+        ;;
 esac
-
-# --- WSL: ALSA -> PulseAudio bridge via WSLg ---
-# ponytail: el libportaudio2 de Ubuntu no tiene backend PulseAudio nativo,
-#            asi que puenteamos ALSA->PulseAudio via el plugin libasound2-plugins.
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    export PULSE_SERVER="${PULSE_SERVER:-unix:/mnt/wslg/PulseServer}"
-    PULSE_CONF=0
-    if command -v pactl >/dev/null 2>&1; then
-        pactl info >/dev/null 2>&1 && PULSE_CONF=1 || warn "PulseAudio (WSLg) no responde."
-    else
-        # Sin pactl, probamos directo el socket
-        [ -S "$PULSE_SERVER" ] && PULSE_CONF=1
-    fi
-    if [ "$PULSE_CONF" = 1 ]; then
-        if [ ! -f ~/.asoundrc ] || ! grep -q pulse ~/.asoundrc 2>/dev/null; then
-            cat > ~/.asoundrc << 'EOF'
-pcm.!default pulse
-ctl.!default pulse
-EOF
-            ok "ASound configurado para rutear a PulseAudio (WSLg)."
-        fi
-    else
-        warn "WSLg detectado pero PulseAudio no disponible. El microfono no funcionara."
-    fi
-    unset PULSE_CONF
-fi
 
 # --- 4. Ollama: instalar ---
 if ! command -v ollama >/dev/null 2>&1; then
@@ -167,7 +140,7 @@ fi
 ok "Ollama conectado en $OLLAMA_BASE_URL"
 
 # --- 6. Pull de modelos Ollama ---
-OLLAMA_MODEL="${OLLAMA_MODEL:-liquidai/lfm2.5-1.2b-instruct:latest}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:1.5b}"
 OLLAMA_EMBED_MODEL="${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
 
 for model in "$OLLAMA_MODEL" "$OLLAMA_EMBED_MODEL"; do
@@ -180,45 +153,24 @@ for model in "$OLLAMA_MODEL" "$OLLAMA_EMBED_MODEL"; do
     fi
 done
 
-# --- 7. Modelos Vosk/Piper ---
+# --- 7. Modelos Piper ---
 command -v curl >/dev/null 2>&1 || error "curl no instalado."
-command -v unzip >/dev/null 2>&1 || error "unzip no instalado."
 
-if [ ! -d models/vosk-model-es-0.42 ] || [ ! -f models/es_ES-sharvard-medium.onnx ] || [ ! -f models/es_ES-sharvard-medium.onnx.json ]; then
-    info "Faltan modelos Vosk/Piper. Descargando..."
+if [ ! -f models/es_ES-sharvard-medium.onnx ] || [ ! -f models/es_ES-sharvard-medium.onnx.json ]; then
+    info "Faltan modelos Piper. Descargando..."
     bash scripts/download_models.sh
 fi
 
-[ -d models/vosk-model-es-0.42 ] || error "Vosk no descargado en models/vosk-model-es-0.42"
 [ -f models/es_ES-sharvard-medium.onnx ] || error "Piper .onnx no descargado en models/"
 [ -f models/es_ES-sharvard-medium.onnx.json ] || warn "Piper .json no encontrado. La TTS podria fallar."
-ok "Modelos Vosk/Piper listos."
+ok "Modelos Piper listos."
 
 # --- 8. Deps Python ---
 .venv/bin/python -m pip install -q -r requirements.txt
 ok "Dependencias Python instaladas."
 
-# --- 9. Audio check (best-effort, no aborta) ---
-# ponytail: best-effort, no aborta
-case "$(uname -s)" in
-    Linux)
-        if grep -qi microsoft /proc/version 2>/dev/null; then
-            # WSL
-            if command -v pactl >/dev/null 2>&1; then
-                pactl info >/dev/null 2>&1 && ok "PulseAudio (WSLg) disponible." || warn "PulseAudio (WSLg) no responde."
-            elif [ -S "$PULSE_SERVER" ] 2>/dev/null; then
-                ok "Socket PulseAudio (WSLg) detectado."
-            else
-                warn "WSLg no disponible. Sin audio."
-            fi
-        fi
-        command -v arecord >/dev/null 2>&1 && { arecord -l >/dev/null 2>&1 || warn "Sin entrada de audio detectada (arecord -l)."; }
-        command -v aplay >/dev/null 2>&1 && { aplay -l >/dev/null 2>&1 || warn "Sin salida de audio detectada (aplay -l)."; }
-        ;;
-    Darwin)
-        command -v system_profiler >/dev/null 2>&1 && { system_profiler SPAudioDataType 2>/dev/null | grep -q Audio || warn "Sin audio detectado."; }
-        ;;
-esac
-
-# --- 10. Lanzar ---
-exec .venv/bin/python -m src.main
+# --- 9. Lanzar servidor web ---
+WEB_HOST="${WEB_HOST:-0.0.0.0}"
+WEB_PORT="${WEB_PORT:-8080}"
+info "Servidor web en http://$WEB_HOST:$WEB_PORT"
+exec .venv/bin/python -m uvicorn src.web:app --host "$WEB_HOST" --port "$WEB_PORT"

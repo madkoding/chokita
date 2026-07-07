@@ -1,4 +1,8 @@
-vosk==0.3.44
-PyAudio==0.2.14
-textual>=0.86.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
 piper-tts>=1.0.0
+torch
+transformers
+accelerate
+librosa
+soundfile

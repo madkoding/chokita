@@ -363,10 +363,12 @@ class OllamaClient:
         return joined or None
 
     def _stream_ndjson(self, resp) -> str | None:
-        """Stream Ollama and parse NDJSON lines incrementally."""
+        """Stream Ollama: parse NDJSON lines and emit token-level chunks to UI."""
         parts: list[str] = []
         line_buf = ""
         self._ndjson_tool_calls = []
+        cur_type: str | None = None
+        in_content = False  # dentro del valor del key "content"
         for ollama_line in resp:
             raw = ollama_line.decode().strip()
             if not raw:
@@ -378,6 +380,26 @@ class OllamaClient:
                     break
                 continue
             line_buf += token
+            # Detectar tipo NDJSON
+            if cur_type is None and '"type"' in line_buf:
+                for tname in ('"thinking"', '"response"', '"tool_call"', '"memory"', '"feeling"'):
+                    if tname in line_buf:
+                        cur_type = tname.strip('"')
+                        break
+            # Emitir solo el valor de "content", no la estructura JSON
+            if not in_content and cur_type in ("thinking", "response") and self.ui_queue:
+                if '"content":"' in line_buf:
+                    in_content = True
+                    idx = token.rfind('"')
+                    if idx >= 0 and idx + 1 < len(token):
+                        rest = token[idx + 1:]
+                        if rest:
+                            self.ui_queue.put({"type": f"{cur_type}_chunk", "content": rest})
+            elif in_content and self.ui_queue:
+                if token == '"':
+                    in_content = False
+                else:
+                    self.ui_queue.put({"type": f"{cur_type}_chunk", "content": token})
             while "\n" in line_buf:
                 complete, line_buf = line_buf.split("\n", 1)
                 parsed = parse_model_line(complete)
@@ -386,6 +408,8 @@ class OllamaClient:
                 out = self._process_ndjson_line(parsed, emit=True)
                 if out is not None:
                     parts.append(out)
+                cur_type = None
+                in_content = False
         # Remaining buffer as response fallback
         leftover = line_buf.strip()
         if leftover:

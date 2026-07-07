@@ -4,16 +4,8 @@ set -euo pipefail
 MODELS_DIR="${1:-models}"
 mkdir -p "$MODELS_DIR"
 
-VOSK_URL="https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
-VOSK_DIR="$MODELS_DIR/vosk-model-es-0.42"
-if [ ! -d "$VOSK_DIR" ]; then
-    echo "Descargando modelo Vosk..."
-    curl -L "$VOSK_URL" -o /tmp/vosk.zip
-    unzip -q /tmp/vosk.zip -d "$MODELS_DIR"
-    rm /tmp/vosk.zip
-else
-    echo "Vosk ya existe, saltando."
-fi
+# Qwen3-ASR se descarga automáticamente desde HuggingFace al primer uso.
+# No necesita descarga manual.
 
 PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/es/es_ES/sharvard/medium"
 PIPER_ONNX="$MODELS_DIR/es_ES-sharvard-medium.onnx"

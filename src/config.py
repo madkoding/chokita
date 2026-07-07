@@ -8,7 +8,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "liquidai/lfm2.5-1.2b-instruct:latest")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "ornith:9b")
     ollama_timeout_seconds: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
     ollama_fallback_message: str = os.getenv(
         "OLLAMA_FALLBACK_MESSAGE",
@@ -16,11 +16,14 @@ class Settings:
     )
     ollama_keep_alive: int = int(os.getenv("OLLAMA_KEEP_ALIVE", "-1"))
 
-    vosk_model_path: Path = Path(os.getenv("VOSK_MODEL_PATH", "models/vosk-model-es-0.42"))
+    asr_model: str = os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B-hf")
     sample_rate_hz: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
     audio_chunk_size: int = int(os.getenv("AUDIO_CHUNK_SIZE", "4000"))
     stt_retry_delay_seconds: float = float(os.getenv("STT_RETRY_DELAY_SECONDS", "1.5"))
     wake_command_timeout_seconds: float = float(os.getenv("WAKE_COMMAND_TIMEOUT_SECONDS", "12.0"))
+
+    web_host: str = os.getenv("WEB_HOST", "0.0.0.0")
+    web_port: int = int(os.getenv("WEB_PORT", "8080"))
 
     piper_model_path: Path = Path(os.getenv("PIPER_MODEL_PATH", "models/es_ES-sharvard-medium.onnx"))
     _piper_speaker_val = os.getenv("PIPER_SPEAKER", "1")
@@ -86,8 +89,7 @@ class Settings:
     compact_threshold: float = float(os.getenv("COMPACT_THRESHOLD", "0.80"))
     # Estimación: 1 token ≈ 4 chars. Sin tiktoken.
 
-    # --- Precarga ---
-    preload_timeout_seconds: float = float(os.getenv("PRELOAD_TIMEOUT_SECONDS", "120"))
+
 
 
 SETTINGS = Settings()

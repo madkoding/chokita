@@ -9,3 +9,8 @@ venv/
 *.db
 models/
 bin/
+
+# Audio artifacts
+RDPSink.monitor
+wave_input
+wave_output.monitor
