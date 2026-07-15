@@ -139,4 +139,3 @@ def call_tool(name: str, args: dict[str, Any]) -> str:
         return f"Error en tool {name}: {e}"
 
 
-tools_system_doc = TOOLS_DOC

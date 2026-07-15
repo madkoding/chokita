@@ -28,8 +28,6 @@ LOGGER = logging.getLogger(__name__)
 
 SOUL_PATH = Path(__file__).resolve().parent.parent / "SOUL.md"
 
-_NDJSON_TYPES = frozenset({"thinking", "feeling", "tool_call", "response", "memory"})
-
 NDJSON_FORMAT_HINT = (
     "Respondé en líneas NDJSON. Una línea = un JSON con al menos \"type\".\n"
     '  {"type":"thinking","content":"..."} — tu razonamiento interno\n'
@@ -42,13 +40,18 @@ NDJSON_FORMAT_HINT = (
 
 
 def parse_model_line(line: str) -> dict | None:
-    """Parse a single NDJSON line from the model. Returns normalized dict or None (ignore)."""
+    """Parse a single NDJSON line from the model. Returns normalized dict or None (ignore).
+    Tolerante: si falta 'type' o es desconocido pero hay 'content', trata como response.
+    """
     stripped = line.strip()
     if not stripped:
         return None
     try:
         obj = json.loads(stripped)
     except json.JSONDecodeError:
+        return {"type": "response", "content": stripped}
+
+    if not isinstance(obj, dict):
         return {"type": "response", "content": stripped}
 
     t = obj.get("type", "")
@@ -64,10 +67,14 @@ def parse_model_line(line: str) -> dict | None:
         return {"type": "tool_call", "name": name, "args": args} if name else None
     if t == "response":
         content = obj.get("content", "")
-        return {"type": "response", "content": content} if content else None
+        return {"type": "response", "content": content}
     if t == "memory":
         content = obj.get("content", "")
         return {"type": "memory", "content": content} if content else None
+    # type faltante o desconocido: si hay content, tratar como response
+    content = obj.get("content", "")
+    if content:
+        return {"type": "response", "content": content}
     return None
 
 
@@ -289,13 +296,19 @@ class OllamaClient:
             return
         t = parsed["type"]
         if t == "thinking":
-            self.ui_queue.put({"type": "thinking", "content": parsed["content"], "partial": partial})
+            if partial:
+                self.ui_queue.put({"type": "thinking_chunk", "content": parsed["content"]})
+            else:
+                self.ui_queue.put({"type": "thinking", "content": parsed["content"]})
         elif t == "feeling":
             self.ui_queue.put({"type": "feeling", "feeling": parsed["feeling"]})
         elif t == "tool_call":
             self.ui_queue.put({"type": "tool_call", "name": parsed["name"], "args": parsed["args"]})
         elif t == "response":
-            self.ui_queue.put({"type": "response", "content": parsed["content"], "partial": partial})
+            if partial:
+                self.ui_queue.put({"type": "response_chunk", "content": parsed["content"]})
+            else:
+                self.ui_queue.put({"type": "response", "content": parsed["content"]})
         elif t == "memory":
             self.ui_queue.put({"type": "log", "message": f"🧠 {parsed['content'][:60]}"})
 
@@ -363,43 +376,27 @@ class OllamaClient:
         return joined or None
 
     def _stream_ndjson(self, resp) -> str | None:
-        """Stream Ollama: parse NDJSON lines and emit token-level chunks to UI."""
+        """Stream Ollama: accumulate tokens into complete NDJSON lines, parse each, emit to UI.
+        # ponytail: accumulate until newline, then json.loads the full line. No partial-JSON guessing.
+        """
         parts: list[str] = []
-        line_buf = ""
         self._ndjson_tool_calls = []
-        cur_type: str | None = None
-        in_content = False  # dentro del valor del key "content"
+        line_buf = ""
         for ollama_line in resp:
             raw = ollama_line.decode().strip()
             if not raw:
                 continue
-            chunk = json.loads(raw)
+            try:
+                chunk = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
             token = chunk.get("message", {}).get("content", "")
             if not token:
                 if chunk.get("done"):
                     break
                 continue
             line_buf += token
-            # Detectar tipo NDJSON
-            if cur_type is None and '"type"' in line_buf:
-                for tname in ('"thinking"', '"response"', '"tool_call"', '"memory"', '"feeling"'):
-                    if tname in line_buf:
-                        cur_type = tname.strip('"')
-                        break
-            # Emitir solo el valor de "content", no la estructura JSON
-            if not in_content and cur_type in ("thinking", "response") and self.ui_queue:
-                if '"content":"' in line_buf:
-                    in_content = True
-                    idx = token.rfind('"')
-                    if idx >= 0 and idx + 1 < len(token):
-                        rest = token[idx + 1:]
-                        if rest:
-                            self.ui_queue.put({"type": f"{cur_type}_chunk", "content": rest})
-            elif in_content and self.ui_queue:
-                if token == '"':
-                    in_content = False
-                else:
-                    self.ui_queue.put({"type": f"{cur_type}_chunk", "content": token})
+            # Each NDJSON line is delimited by \n. Process complete lines as they arrive.
             while "\n" in line_buf:
                 complete, line_buf = line_buf.split("\n", 1)
                 parsed = parse_model_line(complete)
@@ -408,8 +405,6 @@ class OllamaClient:
                 out = self._process_ndjson_line(parsed, emit=True)
                 if out is not None:
                     parts.append(out)
-                cur_type = None
-                in_content = False
         # Remaining buffer as response fallback
         leftover = line_buf.strip()
         if leftover:

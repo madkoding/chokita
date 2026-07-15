@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
-import threading
-from typing import Any
 
 from src.config import SETTINGS
 
@@ -12,21 +10,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PiperTTS:
-    def __init__(self, voice: Any = None) -> None:
-        self._proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
-        self._voice = voice
-
-    def stop(self) -> None:
-        with self._lock:
-            proc = self._proc
-            self._proc = None
-        if proc and proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-
     _PIPER_WORKER = (
         "import sys, wave, tempfile, os\n"
         "from pathlib import Path\n"

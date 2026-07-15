@@ -13,7 +13,7 @@ import threading
 import time
 import types
 import urllib.request
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -111,26 +111,89 @@ def _smoke_check() -> None:
         print(f"ERROR: Ollama no responde en {SETTINGS.ollama_base_url}")
         print("Asegurate de tener Ollama corriendo: ollama serve")
         sys.exit(1)
+
+
+_SPINNER = "|/-\\"
+
+def _spinner(msg: str, done: threading.Event) -> None:
+    i = 0
+    while not done.is_set():
+        print(f"\r{msg} {_SPINNER[i % len(_SPINNER)]}", end="", flush=True)
+        i += 1
+        time.sleep(0.15)
+    print(f"\r{msg} ✓", flush=True)
+
+
+def _preload_with_spinner(label: str, fn: Callable[[], None]) -> bool:
+    done = threading.Event()
+    t = threading.Thread(target=_spinner, args=(label, done), daemon=True)
+    t.start()
     try:
-        embed_url = f"{SETTINGS.ollama_base_url}/api/embeddings"
-        data = json.dumps({"model": SETTINGS.ollama_embed_model, "prompt": "test"}).encode()
-        req = urllib.request.Request(embed_url, data=data, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        print(f"ERROR: Modelo de embeddings '{SETTINGS.ollama_embed_model}' no está cargado.")
-        print(f"  ollama pull {SETTINGS.ollama_embed_model}")
-        sys.exit(1)
+        fn()
+        return True
+    except Exception as exc:
+        LOGGER.warning("%s falló: %s", label, exc)
+        return False
+    finally:
+        done.set()
+        t.join(timeout=2)
 
 
-def _warm_ollama(model: str) -> None:
-    LOGGER.debug("Warming Ollama model: %s", model)
-    data = json.dumps({"model": model}).encode()
-    req = urllib.request.Request(
-        f"{SETTINGS.ollama_base_url}/api/show",
-        data=data,
-        headers={"Content-Type": "application/json"},
-    )
+def _warm_chat_model() -> None:
+    """Pre-carga el modelo de chat en memoria con una inferencia real."""
+    url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/chat"
+    payload = {
+        "model": SETTINGS.ollama_model,
+        "stream": False,
+        "keep_alive": SETTINGS.ollama_keep_alive,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds).read()
+
+
+def _warm_embed_model() -> None:
+    """Pre-carga el modelo de embeddings con una inferencia real."""
+    url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/embeddings"
+    payload = {
+        "model": SETTINGS.ollama_embed_model,
+        "prompt": "test",
+        "keep_alive": SETTINGS.ollama_keep_alive,
+    }
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds).read()
+
+
+def _pull_ollama_model(model: str) -> bool:
+    """Descarga un modelo con `ollama pull`. Retorna True si OK."""
+    print(f"  Descargando {model}...", flush=True)
+    try:
+        r = subprocess.run(
+            ["ollama", "pull", model],
+            capture_output=True, text=True, timeout=600,
+        )
+        if r.returncode != 0:
+            LOGGER.error("ollama pull %s falló (rc=%d): %s", model, r.returncode, r.stderr[:200])
+            return False
+        return True
+    except FileNotFoundError:
+        LOGGER.error("comando 'ollama' no encontrado en PATH")
+        return False
+    except subprocess.TimeoutExpired:
+        LOGGER.error("ollama pull %s timeout (600s)", model)
+        return False
+
+
+def _ensure_model(label: str, model: str, warm_fn: Callable[[], None]) -> bool:
+    """Pre-carga un modelo. Si falla, hace pull y reintenta."""
+    if _preload_with_spinner(label, warm_fn):
+        return True
+    print(f"  {model} no está descargado. Haciendo pull...", flush=True)
+    if not _pull_ollama_model(model):
+        return False
+    return _preload_with_spinner(label, warm_fn)
 
 
 def assistant_loop() -> None:
@@ -161,8 +224,6 @@ def assistant_loop() -> None:
                     ui_queue.put({"type": "audio", "data": base64.b64encode(wav_data).decode()})
             finally:
                 mute_event.clear()
-            if abort_event.is_set():
-                tts.stop()
             ui_queue.put({"type": "state", "state": "IDLE", "message": "Esperando comando..."})
             _activity_ping()
 
@@ -179,7 +240,8 @@ def assistant_loop() -> None:
             ui_queue.put({"type": "log", "message": str(exc)})
 
 
-def _start_stt() -> None:
+def _start_stt() -> bool:
+    """Inicia el subprocess STT y espera a que cargue el modelo. Retorna True si OK."""
     global stt_proc, stt_stdout_thread
     LOGGER.debug("Starting STT subprocess...")
 
@@ -200,11 +262,15 @@ def _start_stt() -> None:
     except Exception:
         LOGGER.exception("Failed to start STT subprocess")
         ui_queue.put({"type": "log", "message": "❌ No se pudo iniciar STT"})
-        return
+        return False
 
     LOGGER.debug("STT subprocess iniciado (pid=%d)", stt_proc.pid)
 
+    # Esperar al evento "Modelo cargado" leyendo stdout línea por línea.
+    stt_loaded = threading.Event()
+
     def _read_stdout() -> None:
+        global stt_stdout_thread
         assert stt_proc and stt_proc.stdout
         for raw_line in iter(stt_proc.stdout.readline, b""):
             if stop_event.is_set():
@@ -217,6 +283,9 @@ def _start_stt() -> None:
             except json.JSONDecodeError:
                 continue
             etype = event.get("event")
+
+            if etype == "status" and "cargado" in event.get("message", "").lower():
+                stt_loaded.set()
 
             if etype == "listening":
                 ui_queue.put({"type": "state", "state": "LISTENING", "message": "Escuchando..."})
@@ -232,15 +301,12 @@ def _start_stt() -> None:
                 if is_stop:
                     ui_queue.put({"type": "state", "state": "RECOGNIZED", "message": f"[STOP] {text}"})
                     abort_event.set()
-                    tts.stop()  # type: ignore[union-attr]
                     ui_queue.put({"type": "state", "state": "LISTENING", "message": "Escuchando..."})
                 elif remainder:
-                    # Hay instrucción después del wake word → enviar al input
                     ui_queue.put({"type": "voice_input", "text": text})
                     ui_queue.put({"type": "state", "state": "RECOGNIZED", "message": text})
                     ui_queue.put({"type": "state", "state": "LISTENING", "message": "Escuchando..."})
                 else:
-                    # Solo wake word sin instrucción → esperar próxima utterance
                     ui_queue.put({"type": "state", "state": "RECOGNIZED", "message": "Sí? Te escucho..."})
                     ui_queue.put({"type": "state", "state": "LISTENING", "message": "Escuchando..."})
             elif etype == "error":
@@ -255,6 +321,18 @@ def _start_stt() -> None:
 
     stt_stdout_thread = threading.Thread(target=_read_stdout, daemon=True, name="stt-stdout")
     stt_stdout_thread.start()
+
+    done = threading.Event()
+    t = threading.Thread(target=_spinner, args=("Cargando modelo de voz (STT)...", done), daemon=True)
+    t.start()
+    if not stt_loaded.wait(timeout=300):
+        done.set()
+        t.join(timeout=2)
+        LOGGER.error("STT no cargó el modelo en 300s")
+        return False
+    done.set()
+    t.join(timeout=2)
+    return True
 
 
 def _stop_stt() -> None:
@@ -317,6 +395,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tts = PiperTTS()
     llm = OllamaClient(memory=memory, ui_queue=ui_queue)
 
+    # --- Pre-carga de modelos con spinner en consola ---
+    print("Precargando modelos en memoria...", flush=True)
+
+    ok_chat = _ensure_model(f"  Modelo de chat ({SETTINGS.ollama_model})", SETTINGS.ollama_model, _warm_chat_model)
+    ok_embed = _ensure_model(f"  Modelo de embeddings ({SETTINGS.ollama_embed_model})", SETTINGS.ollama_embed_model, _warm_embed_model)
+
+    if not ok_chat:
+        print("✗  Modelo de chat no disponible tras pull. Abortando.", flush=True)
+        sys.exit(1)
+    if not ok_embed:
+        print("✗  Modelo de embeddings no disponible tras pull. Abortando.", flush=True)
+        sys.exit(1)
+
     worker_thread = threading.Thread(
         target=assistant_loop, daemon=True, name="assistant-loop",
     )
@@ -339,20 +430,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     sleep_thread.start()
 
-    # Warm Ollama models
-    try:
-        _warm_ollama(SETTINGS.ollama_model)
-        print(f"✓ Ollama (chat): {SETTINGS.ollama_model}", flush=True)
-    except Exception as exc:
-        LOGGER.warning("Ollama chat model warmup falló: %s", exc)
-    try:
-        _warm_ollama(SETTINGS.ollama_embed_model)
-        print(f"✓ Ollama (embeddings): {SETTINGS.ollama_embed_model}", flush=True)
-    except Exception as exc:
-        LOGGER.warning("Ollama embed model warmup falló: %s", exc)
-
-    # Start STT subprocess
-    _start_stt()
+    # Iniciar STT y esperar a que cargue el modelo antes de levantar la UI.
+    ok_stt = _start_stt()
+    if not ok_stt:
+        print("⚠  STT no cargó el modelo de voz. Entrada por voz deshabilitada.", flush=True)
 
     ui_queue.put({"type": "state", "state": "IDLE", "message": "Listo."})
     print("✓ Servidor listo. Abrí http://localhost:8080 en tu navegador.", flush=True)
@@ -410,8 +491,6 @@ async def ws(websocket: WebSocket) -> None:
                     text_queue.put(text)
             elif t == "stop":
                 abort_event.set()
-                if tts:
-                    tts.stop()
             elif t == "audio_utterance":
                 data = msg.get("data", "")
                 if data:

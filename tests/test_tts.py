@@ -1,6 +1,18 @@
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from src.tts import PiperTTS
+
+
+def test_piper_tts_no_stop_no_proc_no_lock_no_voice() -> None:
+    tts = PiperTTS()
+    assert not hasattr(tts, "stop")
+    assert not hasattr(tts, "_proc")
+    assert not hasattr(tts, "_lock")
+    assert not hasattr(tts, "_voice")
+
+
+def test_piper_tts_init_takes_no_args() -> None:
+    PiperTTS()
 
 
 def test_speak_falls_back_when_model_missing(capsys) -> None:
@@ -39,35 +51,3 @@ def test_speak_fallback_on_subprocess_failure(capsys) -> None:
     captured = capsys.readouterr()
     assert "[TTS] fallback text" in captured.out
 
-
-def test_accept_preloaded_voice() -> None:
-    tts = PiperTTS(voice="preloaded")
-    assert tts._voice == "preloaded"
-
-
-def test_stop_kills_running_process() -> None:
-    tts = PiperTTS()
-    proc = Mock()
-    proc.poll.return_value = None
-    tts._proc = proc
-    tts.stop()
-    proc.kill.assert_called_once()
-
-
-def test_stop_already_finished_process() -> None:
-    tts = PiperTTS()
-    proc = Mock()
-    proc.poll.return_value = 0
-    tts._proc = proc
-    tts.stop()
-    proc.kill.assert_not_called()
-
-
-def test_stop_kill_raises() -> None:
-    tts = PiperTTS()
-    proc = Mock()
-    proc.poll.return_value = None
-    proc.kill.side_effect = OSError("permission denied")
-    tts._proc = proc
-    tts.stop()
-    proc.kill.assert_called_once()
