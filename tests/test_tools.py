@@ -131,3 +131,9 @@ def test_grep_binary_file(workdir):
     (workdir / "text.py").write_text("match found", encoding="utf-8")
     out = call_tool("grep", {"pattern": "match"})
     assert "text.py" in out
+
+
+def test_no_tools_system_doc_alias():
+    import src.tools as tools_mod
+    assert not hasattr(tools_mod, "tools_system_doc")
+    assert hasattr(tools_mod, "TOOLS_DOC")

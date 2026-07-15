@@ -4,5 +4,3 @@ piper-tts>=1.0.0
 torch
 transformers
 accelerate
-librosa
-soundfile

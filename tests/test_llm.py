@@ -6,6 +6,11 @@ from unittest.mock import Mock, patch
 from src.llm import OllamaClient, parse_model_line
 
 
+def test_no_ndjson_types_constant():
+    import src.llm as llm_mod
+    assert not hasattr(llm_mod, "_NDJSON_TYPES")
+
+
 class DummyResponse:
     def __init__(self, content: str = "respuesta"):
         self._content = content
@@ -446,8 +451,13 @@ def test_parse_model_line_empty() -> None:
     assert parse_model_line("   ") is None
 
 
-def test_parse_model_line_unknown_type() -> None:
+def test_parse_model_line_unknown_type_with_content() -> None:
     r = parse_model_line('{"type":"unknown","content":"x"}')
+    assert r == {"type": "response", "content": "x"}
+
+
+def test_parse_model_line_unknown_type_no_content() -> None:
+    r = parse_model_line('{"type":"unknown"}')
     assert r is None
 
 
@@ -456,9 +466,29 @@ def test_parse_model_line_no_type() -> None:
     assert r is None
 
 
+def test_parse_model_line_no_type_with_content() -> None:
+    r = parse_model_line('{"content":"hola sin type"}')
+    assert r == {"type": "response", "content": "hola sin type"}
+
+
+def test_parse_model_line_response_empty_content() -> None:
+    r = parse_model_line('{"type":"response","content":""}')
+    assert r == {"type": "response", "content": ""}
+
+
 def test_parse_model_line_empty_after_json_parse() -> None:
     assert parse_model_line('{"type":"thinking","content":""}') is None
     assert parse_model_line('{"type":"tool_call","name":"","args":{}}') is None
+
+
+def test_parse_model_line_non_dict_json() -> None:
+    r = parse_model_line('"solo un string"')
+    assert r == {"type": "response", "content": '"solo un string"'}
+
+
+def test_parse_model_line_missing_args_key() -> None:
+    r = parse_model_line('{"type":"tool_call","name":"read"}')
+    assert r == {"type": "tool_call", "name": "read", "args": {}}
 
 
 @patch("urllib.request.urlopen")
@@ -487,7 +517,7 @@ def test_ndjson_parse_stream_thinking_and_response(mock_urlopen) -> None:
     events = []
     while not ui.empty():
         events.append(ui.get_nowait())
-    thinking_events = [e for e in events if e["type"] == "thinking"]
+    thinking_events = [e for e in events if e["type"] in ("thinking", "thinking_chunk")]
     assert len(thinking_events) > 0
 
 

@@ -3,7 +3,7 @@
 ## Verificación
 - `ruff check src tests && mypy src` — lint + type check obligatorio antes de commit.
 - `python -m compileall src && python -m pytest -q` — check obligatorio antes de commit.
-- 43 tests (audio, config, llm, memory, raptor, soul, sleep, tools, tts).
+- 129 tests (audio, config, llm, memory, raptor, soul, sleep, tools, tts).
 
 ## Decisiones de arquitectura
 - HTTP a Ollama: stdlib `urllib.request` (no `requests`). Sin deps externas para HTTP.
@@ -11,7 +11,7 @@
 - Alma: 3 voces (YO/SUPERYO/ELLO) en hilo idle, sintetiza delta → RAG.
 - Tools: 6 herramientas sandboxeadas a `CHOKITA_WORKDIR`, registry explícito `_TOOLS` dict.
 - Concurrencia: comunicación entre hilos solo por `queue.Queue`.
-- `from __future__ import annotations` en todos los módulos (compat 3.9+ runtime).
+- `from __future__ import annotations` en todos los módulos.
 
 ## Estilo
 - Ponytail: mínimo código que funciona, stdlib primero, sin abstracciones con 1 implementación.
