@@ -57,6 +57,7 @@ sleep_thread: SleepThread | None = None
 stt_proc: subprocess.Popen[bytes] | None = None
 stt_stdout_thread: threading.Thread | None = None
 stt_stdin_lock = threading.Lock()
+stt_dead = threading.Event()  # ponytail: flag de EOF. _ensure_stt chequea además de poll().
 
 _last_activity = time.time()
 _activity_lock = threading.Lock()
@@ -78,12 +79,15 @@ def _crash_handler(
     exc_value: BaseException,
     exc_tb: types.TracebackType | None,
 ) -> None:
-    if issubclass(exc_type, KeyboardInterrupt):
-        sys.exit(130)
+    # ponytail: cleanup graceful > kill instantáneo. setea stop_event; el lifespan
+    # post-yield corre el cleanup. si en 5s el main sigue vivo, kill duro.
     LOGGER.critical("Excepción no capturada", exc_info=(exc_type, exc_value, exc_tb))
     stderr = sys.__stderr__ or sys.stderr
     stderr.write("Ocurrió un error. Revisá: ~/.local/share/chokita/chokita.log\n")
-    os._exit(1)
+    stop_event.set()
+    time.sleep(5)
+    if threading.current_thread() is threading.main_thread():
+        os._exit(1)
 
 
 def _thread_crash_handler(args: threading.ExceptHookArgs) -> None:
@@ -91,7 +95,7 @@ def _thread_crash_handler(args: threading.ExceptHookArgs) -> None:
     LOGGER.critical("Excepción en hilo %s", thread_name, exc_info=(args.exc_type, args.exc_value, args.exc_traceback))  # type: ignore[arg-type]
     stderr = sys.__stderr__ or sys.stderr
     stderr.write("Ocurrió un error. Revisá: ~/.local/share/chokita/chokita.log\n")
-    os._exit(1)
+    stop_event.set()
 
 
 sys.excepthook = _crash_handler
@@ -319,6 +323,10 @@ def _start_stt() -> bool:
                     LOGGER.debug("STT status: %s", msg)
                     ui_queue.put({"type": "log", "message": f"🎤 {msg}"})
 
+        # ponytail: si el for termina (EOF o stop_event), marcar muerto para que
+        # _ensure_stt lo detecte en la próxima utterance.
+        stt_dead.set()
+
     stt_stdout_thread = threading.Thread(target=_read_stdout, daemon=True, name="stt-stdout")
     stt_stdout_thread.start()
 
@@ -354,6 +362,11 @@ def _stop_stt() -> None:
 
 def _ensure_stt() -> None:
     global stt_proc, stt_stdout_thread
+    # ponytail: chequear stt_dead ademas de poll() para detectar EOF.
+    if stt_dead.is_set():
+        stt_dead.clear()
+        stt_proc = None
+        stt_stdout_thread = None
     if stt_proc is not None and stt_proc.poll() is not None:
         LOGGER.warning("STT subprocess muerto (rc=%d), reiniciando...", stt_proc.returncode)
         stt_proc = None
@@ -363,17 +376,18 @@ def _ensure_stt() -> None:
 
 
 def _stt_send_audio(audio_base64: str) -> None:
-    raw_len = len(audio_base64) * 3 // 4  # aprox decoded size
-    LOGGER.debug("audio utterance recibida: ~%d bytes PCM", raw_len)
-    _ensure_stt()
-    if stt_proc and stt_proc.stdin:
-        try:
-            with stt_stdin_lock:
+    # ponytail: lock global evita que dos WS concurrentes reinicien STT a la vez.
+    with stt_stdin_lock:
+        raw_len = len(audio_base64) * 3 // 4  # aprox decoded size
+        LOGGER.debug("audio utterance recibida: ~%d bytes PCM", raw_len)
+        _ensure_stt()
+        if stt_proc and stt_proc.stdin:
+            try:
                 stt_proc.stdin.write(json.dumps({"audio": audio_base64}).encode() + b"\n")
                 stt_proc.stdin.flush()
-        except Exception:
-            LOGGER.exception("Failed to send audio to STT subprocess")
-            _ensure_stt()
+            except Exception:
+                LOGGER.exception("Failed to send audio to STT subprocess")
+                _ensure_stt()
 
 
 @asynccontextmanager
@@ -393,7 +407,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print(f"✓ Memoria SQLite: {SETTINGS.db_path}", flush=True)
 
     tts = PiperTTS()
-    llm = OllamaClient(memory=memory, ui_queue=ui_queue)
+    llm = OllamaClient(memory=memory, ui_queue=ui_queue, abort_event=abort_event)
 
     # --- Pre-carga de modelos con spinner en consola ---
     print("Precargando modelos en memoria...", flush=True)
@@ -440,22 +454,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    stop_event.set()
-    _stop_stt()
-    if worker_thread:
-        worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
-    if soul_thread:
-        soul_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
-    if sleep_thread:
-        sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
+    # ponytail: cleanup en try/finally. _stop_stt y memory.close deben correr
+    # aunque un join lance, sino queda STT subprocess zombie y DB sin cerrar.
     try:
-        if llm:
-            llm.extract_memories()
-    except Exception:
-        pass
-    if memory:
-        memory.end_session()
-        memory.close()
+        stop_event.set()
+        _stop_stt()
+        if worker_thread:
+            worker_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds)
+        if soul_thread:
+            soul_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
+        if sleep_thread:
+            sleep_thread.join(timeout=SETTINGS.shutdown_join_timeout_seconds + 1)
+        try:
+            if llm:
+                llm.extract_memories()
+        except Exception:
+            pass
+    finally:
+        if memory:
+            try:
+                memory.end_session()
+            except Exception:
+                pass
+            try:
+                memory.close()
+            except Exception:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -469,6 +493,14 @@ async def index() -> HTMLResponse:
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
+    # ponytail: token simple desde env. si CHOKITA_WS_TOKEN está seteado, lo exigimos.
+    if SETTINGS.ws_token:
+        token_qs = websocket.query_params.get("token", "")
+        auth_hdr = websocket.headers.get("authorization", "")
+        token_hdr = auth_hdr[7:] if auth_hdr.lower().startswith("bearer ") else ""
+        if token_qs != SETTINGS.ws_token and token_hdr != SETTINGS.ws_token:
+            await websocket.close(code=1008, reason="invalid token")
+            return
     await websocket.accept()
 
     ui_queue.put({"type": "state", "state": "IDLE", "message": "Conectado."})
@@ -482,6 +514,7 @@ async def ws(websocket: WebSocket) -> None:
                 await asyncio.sleep(0.05)
 
     async def receiver() -> None:
+        # ponytail: cap de 5MB de base64 = ~30s @ 16kHz int16. evita OOM por audio gigante.
         while True:
             msg = await websocket.receive_json()
             t = msg.get("type")
@@ -493,7 +526,7 @@ async def ws(websocket: WebSocket) -> None:
                 abort_event.set()
             elif t == "audio_utterance":
                 data = msg.get("data", "")
-                if data:
+                if data and len(data) <= 5_000_000:
                     _stt_send_audio(data)
 
     sender_task = asyncio.create_task(sender())

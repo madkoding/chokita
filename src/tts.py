@@ -18,13 +18,19 @@ class PiperTTS:
         "text = sys.stdin.buffer.read().decode()\n"
         "speaker_id = int(sys.argv[2]) if len(sys.argv) > 2 else None\n"
         "dn = os.open(os.devnull, os.O_WRONLY); os.dup2(dn, 2)\n"
+        # ponytail: load() en cada speak (~1-3s overhead). mover a daemon
+        # subprocess (stdin/stdout persistentes) cuando la latencia importe.
         "voice = PiperVoice.load(sys.argv[1])\n"
         "config = SynthesisConfig(speaker_id=speaker_id) if speaker_id is not None else None\n"
         "with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:\n"
         "    wav_path = Path(tmp.name)\n"
-        "with wave.open(str(wav_path), 'wb') as wav_file:\n"
-        "    voice.synthesize_wav(text, wav_file, syn_config=config)\n"
-        "sys.stdout.buffer.write(wav_path.read_bytes())\n"
+        "try:\n"
+        "    with wave.open(str(wav_path), 'wb') as wav_file:\n"
+        "        voice.synthesize_wav(text, wav_file, syn_config=config)\n"
+        "    sys.stdout.buffer.write(wav_path.read_bytes())\n"
+        "finally:\n"
+        "    # ponytail: borra el WAV temp. sin esto, /tmp crece sin límite.\n"
+        "    wav_path.unlink(missing_ok=True)\n"
     )
 
     def speak(self, text: str) -> bytes | None:

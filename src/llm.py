@@ -11,9 +11,11 @@ Flow per user turn:
 from __future__ import annotations
 
 import functools
+import html
 import json
 import logging
 import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -87,6 +89,10 @@ def load_soul_text() -> str:
         return ""
 
 
+class AbortedError(Exception):
+    pass
+
+
 class OllamaClient:
     """Ollama /api/chat client with memory + RAG + tools + context compaction."""
 
@@ -96,13 +102,14 @@ class OllamaClient:
         ui_queue: queue.Queue[dict[str, Any]] | None = None,
         retries: int = 2,
         retry_delay_seconds: float = 0.8,
+        abort_event: threading.Event | None = None,
     ) -> None:
         self.memory = memory
         self.ui_queue = ui_queue
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
+        self._abort_event = abort_event
         self._soul = load_soul_text()
-        self._ndjson_tool_calls: list[dict[str, Any]] = []
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -141,10 +148,11 @@ class OllamaClient:
             return messages
         joined = "\n".join(f"[{m['role']}]: {m['content'][:300]}" for m in to_summarize)
         try:
-            summary = self._raw_chat([
+            summary, _ = self._raw_chat([
                 {"role": "system", "content": "Resumí la siguiente conversación en bullets concisos, en español rioplatense. Mantener hechos clave y decisiones."},
                 {"role": "user", "content": joined},
-            ]) or "Conversacion previa resumida."
+            ])
+            summary = summary or "Conversacion previa resumida."
         except Exception:
             summary = "Conversacion previa resumida."
         # Persist the compacted history.
@@ -169,13 +177,17 @@ class OllamaClient:
         messages = self._maybe_compact(messages)
         self._emit_tokens(messages)
 
+        # ponytail: tool_calls local por iteracion. evita race con soul/sleep que
+        # comparten la misma instancia de OllamaClient.
         for _iter in range(SETTINGS.max_tool_iterations):
-            self._ndjson_tool_calls = []
-            reply = self._raw_chat(messages, stream=_iter == 0)
+            if self._abort_event and self._abort_event.is_set():
+                return SETTINGS.ollama_fallback_message
+            tool_calls: list[dict[str, Any]] = []
+            reply, tool_calls = self._raw_chat(messages, stream=_iter == 0)
             if reply is None:
                 return SETTINGS.ollama_fallback_message
 
-            if not self._ndjson_tool_calls:
+            if not tool_calls:
                 self.memory.add_message("assistant", reply)
                 self._emit_with_reply(messages, reply)
                 return reply
@@ -183,7 +195,7 @@ class OllamaClient:
             messages.append({"role": "assistant", "content": reply})
             self.memory.add_message("assistant", reply)
 
-            for tc in self._ndjson_tool_calls:
+            for tc in tool_calls:
                 name = tc["name"]
                 args = tc["args"]
                 result = call_tool(name, args)
@@ -203,7 +215,7 @@ class OllamaClient:
                 "content": "Alcanzaste el limite de tools. Respondé en texto plano sin mas tools.",
             }
         )
-        reply = self._raw_chat(messages)
+        reply, _ = self._raw_chat(messages)
         if reply is None:
             return SETTINGS.ollama_fallback_message
         self.memory.add_message("assistant", reply)
@@ -211,7 +223,11 @@ class OllamaClient:
         return reply
 
     def chat_raw(self, messages: list[dict[str, str]]) -> str:
-        return self._raw_chat(messages) or ""
+        try:
+            reply, _ = self._raw_chat(messages)
+        except AbortedError:
+            return ""
+        return reply or ""
 
     def extract_memories(self) -> int:
         """Extract long-term memories from the current session and store them as RAG chunks.
@@ -237,10 +253,11 @@ class OllamaClient:
             "respondé una linea vacia."
         )
         try:
-            raw = self._raw_chat([
+            raw, _ = self._raw_chat([
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": convo},
-            ]) or ""
+            ])
+            raw = raw or ""
         except Exception:
             LOGGER.warning("Memory extraction LLM call failed")
             return 0
@@ -255,7 +272,8 @@ class OllamaClient:
             if not b or len(b) < 5:
                 continue
             try:
-                self.memory.add_chunk("memory", "episode", b)
+                # ponytail: html.escape previene XSS si el chunk llega al UI como HTML.
+                self.memory.add_chunk("memory", "episode", html.escape(b))
                 count += 1
             except Exception:
                 LOGGER.warning("Failed to store a memory chunk")
@@ -312,16 +330,18 @@ class OllamaClient:
         elif t == "memory":
             self.ui_queue.put({"type": "log", "message": f"🧠 {parsed['content'][:60]}"})
 
-    def _process_ndjson_line(self, parsed: dict, *, emit: bool) -> str | None:
+    def _process_ndjson_line(self, parsed: dict, tool_calls: list[dict[str, Any]], *, emit: bool) -> str | None:
         """Return response content if type==response, None otherwise. Side-effects: tool_calls, memory."""
+        # ponytail: tool_calls por param (no atributo de instancia) evita race con soul/sleep.
         if parsed["type"] == "response":
             return parsed["content"]
         if parsed["type"] == "tool_call":
-            self._ndjson_tool_calls.append(parsed)
+            tool_calls.append(parsed)
             return None
         if parsed["type"] == "memory":
             try:
-                self.memory.add_chunk("memory", "episode", parsed["content"])
+                # ponytail: html.escape previene XSS si el chunk llega al UI como HTML.
+                self.memory.add_chunk("memory", "episode", html.escape(parsed["content"]))
             except Exception:
                 LOGGER.warning("Failed to store inline memory")
             return None
@@ -329,7 +349,7 @@ class OllamaClient:
             self._emit_ndjson_event(parsed, partial=True)
         return None
 
-    def _raw_chat(self, messages: list[dict[str, str]], stream: bool = False) -> str | None:
+    def _raw_chat(self, messages: list[dict[str, str]], stream: bool = False) -> tuple[str | None, list[dict[str, Any]]]:
         url = f"{SETTINGS.ollama_base_url.rstrip('/')}/api/chat"
         payload = {
             "model": SETTINGS.ollama_model,
@@ -339,48 +359,52 @@ class OllamaClient:
         }
         data = json.dumps(payload).encode()
         for attempt in range(self.retries + 1):
+            # ponytail: chequea abort entre retries. cancela el LLM call si el user pidió stop.
+            if self._abort_event and self._abort_event.is_set():
+                raise AbortedError
             try:
                 req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
                 resp = urllib.request.urlopen(req, timeout=SETTINGS.ollama_timeout_seconds)
                 if not stream:
                     body: dict[str, Any] = json.loads(resp.read())
                     text = body.get("message", {}).get("content", "").strip()
-                    result = self._parse_ndjson_text(text)
-                    if result is not None:
-                        return result
+                    text, tool_calls = self._parse_ndjson_text(text)
                 else:
-                    result = self._stream_ndjson(resp)
-                    if result is not None:
-                        return result
+                    text, tool_calls = self._stream_ndjson(resp)
+                if text is not None:
+                    return text, tool_calls
                 LOGGER.warning("Ollama returned empty content (attempt %d/%d)", attempt + 1, self.retries + 1)
             except (urllib.error.URLError, urllib.error.HTTPError) as exc:
                 LOGGER.error("Ollama error: %s", exc)
+            except AbortedError:
+                raise
             except Exception as exc:
                 LOGGER.exception("Unexpected Ollama error: %s", exc)
 
             if attempt < self.retries:
                 time.sleep(self.retry_delay_seconds)
-        return None
+        return None, []
 
-    def _parse_ndjson_text(self, text: str) -> str | None:
-        """Parse a complete response as NDJSON. Returns concatenated response text or None."""
+    def _parse_ndjson_text(self, text: str) -> tuple[str | None, list[dict[str, Any]]]:
+        """Parse a complete response as NDJSON. Returns (concatenated text, tool_calls)."""
         parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
         for raw_line in text.splitlines():
             parsed = parse_model_line(raw_line)
             if parsed is None:
                 continue
-            out = self._process_ndjson_line(parsed, emit=False)
+            out = self._process_ndjson_line(parsed, tool_calls, emit=False)
             if out is not None:
                 parts.append(out)
         joined = "\n".join(parts).strip()
-        return joined or None
+        return (joined or None), tool_calls
 
-    def _stream_ndjson(self, resp) -> str | None:
+    def _stream_ndjson(self, resp) -> tuple[str | None, list[dict[str, Any]]]:
         """Stream Ollama: accumulate tokens into complete NDJSON lines, parse each, emit to UI.
         # ponytail: accumulate until newline, then json.loads the full line. No partial-JSON guessing.
         """
         parts: list[str] = []
-        self._ndjson_tool_calls = []
+        tool_calls: list[dict[str, Any]] = []
         line_buf = ""
         for ollama_line in resp:
             raw = ollama_line.decode().strip()
@@ -402,7 +426,7 @@ class OllamaClient:
                 parsed = parse_model_line(complete)
                 if parsed is None:
                     continue
-                out = self._process_ndjson_line(parsed, emit=True)
+                out = self._process_ndjson_line(parsed, tool_calls, emit=True)
                 if out is not None:
                     parts.append(out)
         # Remaining buffer as response fallback
@@ -413,11 +437,11 @@ class OllamaClient:
                 parts.append(parsed["content"])
                 self._emit_ndjson_event(parsed, partial=False)
             elif parsed and parsed["type"] == "tool_call":
-                self._ndjson_tool_calls.append(parsed)
+                tool_calls.append(parsed)
                 self._emit_ndjson_event(parsed, partial=False)
             else:
                 parts.append(leftover)
                 if self.ui_queue:
                     self.ui_queue.put({"type": "response", "content": leftover, "partial": False})
         joined = "\n".join(parts).strip()
-        return joined or None
+        return (joined or None), tool_calls

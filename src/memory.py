@@ -78,6 +78,12 @@ class Memory:
         self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.execute(f"PRAGMA wal_autocheckpoint={SETTINGS.wal_autocheckpoint_pages};")
         self._conn.executescript(_SCHEMA)
+        # ponytail: UNIQUE (source,kind,text) previene duplicados y permite INSERT OR IGNORE.
+        # sin esto, dos hilos con el mismo texto ambos hacen SELECT miss + INSERT.
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_unique ON chunks(source, kind, text)"
+        )
+        self._conn.commit()
         self._session_id: int | None = None
 
     # ---- sessions ----
@@ -182,6 +188,12 @@ class Memory:
         """
         keep_recent = 4
         with self._lock:
+            # ponytail: borrar summaries viejos ANTES de insertar el nuevo. sin esto
+            # se apilan en el system prompt y crece indefinidamente.
+            self._conn.execute(
+                "DELETE FROM messages WHERE session_id=? AND role='system'",
+                (self._session_id,),
+            )
             rows = self._conn.execute(
                 "SELECT id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
                 (self._session_id, keep_recent),
@@ -214,17 +226,13 @@ class Memory:
         return _embed_ollama(text)
 
     def add_chunk(self, source: str, kind: str, text: str) -> None:
-        with self._lock:
-            existing = self._conn.execute(
-                "SELECT id FROM chunks WHERE source=? AND kind=? AND text=? LIMIT 1",
-                (source, kind, text),
-            ).fetchone()
-            if existing:
-                return
+        # ponytail: embed() afuera del lock. INSERT OR IGNORE con UNIQUE INDEX
+        # cierra el TOCTOU entre SELECT e INSERT (dos hilos con el mismo texto).
         emb = self.embed(text)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO chunks(source, kind, text, embedding, created_at) VALUES (?,?,?,?,?)",
+                "INSERT OR IGNORE INTO chunks(source, kind, text, embedding, created_at) "
+                "VALUES (?,?,?,?,?)",
                 (source, kind, text, json.dumps(emb), time.time()),
             )
             self._conn.commit()
@@ -271,17 +279,24 @@ class Memory:
     def seed_soul(self, soul_text: str) -> None:
         """Chunk SOUL.md by section (## headers) and embed each. Idempotent: clears old 'soul' chunks first."""
         chunks = _split_sections(soul_text)
-        embedded = [(heading, body, self.embed(body)) for heading, body in chunks]
+        # ponytail: embed() adentro del lock. si build_raptor corre entre
+        # embed+INSERT, ve tabla inconsistente. es lento pero soul se procesa 1 vez.
         with self._lock:
             self._conn.execute("DELETE FROM chunks WHERE source='soul'")
-            for heading, body, emb in embedded:
+            for heading, body in chunks:
+                emb = self.embed(body)
                 self._conn.execute(
                     "INSERT INTO chunks(source, kind, text, embedding, created_at) VALUES (?,?,?,?,?)",
                     ("soul", "soul", f"{heading}\n{body}", json.dumps(emb), time.time()),
                 )
             self._conn.commit()
 
-    def retrieve(self, query: str, top_k: int | None = None, source: str | None = None) -> list[dict[str, Any]]:
+    def retrieve(
+        self, query: str, top_k: int | None = None, source: str | None = None,
+        exclude_soul: bool = False,
+    ) -> list[dict[str, Any]]:
+        # ponytail: exclude_soul=True evita duplicar chunks 'soul' que ya estan
+        # en el system prompt (llm.py:269).
         top_k = top_k or SETTINGS.rag_top_k
         q_emb = self.embed(query)
         with self._lock:
@@ -289,6 +304,10 @@ class Memory:
                 rows = self._conn.execute(
                     "SELECT id, source, kind, text, embedding FROM chunks WHERE source=?",
                     (source,),
+                ).fetchall()
+            elif exclude_soul:
+                rows = self._conn.execute(
+                    "SELECT id, source, kind, text, embedding FROM chunks WHERE source != 'soul'"
                 ).fetchall()
             else:
                 rows = self._conn.execute(
@@ -497,8 +516,10 @@ def _kmeans_cosine(items: list[dict[str, Any]], k: int, iters: int = 10) -> list
                 for idx in clusters[c]:
                     for d in range(dim):
                         acc[d] += embs[idx][d]
-                n = len(clusters[c])
-                centroids[c] = [v / n for v in acc]
+                # ponytail: renormalizar L2 el centroide. sin esto cosine k-means
+                # converge subóptimo (la media rompe la unit-norm).
+                norm = math.sqrt(sum(v * v for v in acc)) or 1.0
+                centroids[c] = [v / norm for v in acc]
     result: list[list[dict[str, Any]]] = [[] for _ in range(k)]
     for i, it in enumerate(items):
         best = max(range(k), key=lambda c: _cosine(embs[i], centroids[c]))

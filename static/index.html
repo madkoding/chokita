@@ -799,7 +799,7 @@ function handleEvent(event) {
   } else if (t === 'thinking_chunk') {
     if (!thinkingText) thoughtBubble.classList.add('visible');
     thinkingText += event.content || '';
-    thoughtText.innerHTML = thinkingText;
+    thoughtText.textContent = thinkingText;  // ponytail: textContent, no innerHTML (XSS).
     thoughtText.scrollTop = thoughtText.scrollHeight;
   } else if (t === 'response_chunk') {
     if (!responseText) speechBubble.classList.add('visible');

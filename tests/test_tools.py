@@ -109,7 +109,7 @@ def test_grep_hit_limit(workdir):
 def test_bash_timeout(workdir):
     from src.tools import call_tool
     with patch("src.tools.subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 30)):
-        out = call_tool("bash", {"command": "sleep 100"})
+        out = call_tool("bash", {"command": "ls"})  # ls está en whitelist, llega al run mockeado
         assert "timeout" in out
 
 
@@ -137,3 +137,54 @@ def test_no_tools_system_doc_alias():
     import src.tools as tools_mod
     assert not hasattr(tools_mod, "tools_system_doc")
     assert hasattr(tools_mod, "TOOLS_DOC")
+
+
+def test_bash_rejects_cd_escape(workdir):
+    # ponytail: bash con cd / debe fallar (subshells, paths absolutos escapan el sandbox).
+    from src.tools import call_tool
+    out = call_tool("bash", {"command": "cd / && cat etc/passwd"})
+    assert "no permitido" in out or "parseo" in out
+
+
+def test_bash_rejects_non_whitelisted_binary(workdir):
+    from src.tools import call_tool
+    out = call_tool("bash", {"command": "rm -rf foo"})
+    assert "no permitido" in out
+    assert "whitelist" in out
+
+
+def test_bash_accepts_whitelisted_binary(workdir):
+    from src.tools import call_tool
+    (workdir / "a.txt").write_text("hi", encoding="utf-8")
+    out = call_tool("bash", {"command": "ls"})
+    assert "a.txt" in out
+
+
+def test_write_rejects_deny_name(workdir):
+    # ponytail: write sobre SOUL.md/.env debe fallar aunque estén dentro del workdir.
+    from src.tools import call_tool
+    out = call_tool("write", {"path": "SOUL.md", "content": "x"})
+    assert "read-only" in out
+    out = call_tool("write", {"path": ".env", "content": "x"})
+    assert "read-only" in out
+
+
+def test_write_rejects_deny_dir(workdir):
+    # ponytail: write dentro de src/ debe fallar.
+    from src.tools import call_tool
+    out = call_tool("write", {"path": "src/foo.py", "content": "x"})
+    assert "no se puede escribir" in out
+
+
+def test_safe_rejects_tilde(workdir):
+    from src.tools import call_tool
+    out = call_tool("read", {"path": "~/etc/passwd"})
+    assert "no permitido" in out
+
+
+def test_glob_rejects_parent_escape(workdir):
+    from src.tools import call_tool
+    out = call_tool("glob", {"pattern": "../../../*"})
+    assert "fuera del workdir" in out or "Sin resultados" in out
+    out = call_tool("glob", {"pattern": "/etc/passwd"})
+    assert "fuera del workdir" in out

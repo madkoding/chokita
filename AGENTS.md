@@ -3,7 +3,7 @@
 ## Verificación
 - `ruff check src tests && mypy src` — lint + type check obligatorio antes de commit.
 - `python -m compileall src && python -m pytest -q` — check obligatorio antes de commit.
-- 129 tests (audio, config, llm, memory, raptor, soul, sleep, tools, tts).
+- 159 tests (audio, config, llm, memory, raptor, soul, sleep, tools, tts, web).
 
 ## Decisiones de arquitectura
 - HTTP a Ollama: stdlib `urllib.request` (no `requests`). Sin deps externas para HTTP.

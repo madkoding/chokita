@@ -183,7 +183,7 @@ def main() -> None:
     t0 = time.time()
     processor = AutoProcessor.from_pretrained(model_id)
     model = AutoModelForMultimodalLM.from_pretrained(
-        model_id, device_map="auto",
+        model_id, device_map="cpu",  # ponytail: "cpu" evita la dep accelerate.
     )
     model.eval()
     LOGGER.info("modelo ASR cargado en %.1fs, device=%s, dtype=%s",
@@ -213,12 +213,6 @@ def main() -> None:
                 continue
 
             LOGGER.debug("utterance recibida: %d bytes", len(data))
-
-            # ponytail: dump para debug de audio
-            _dump_dir = Path("/tmp/chokita_audio_dumps")
-            _dump_dir.mkdir(parents=True, exist_ok=True)
-            dump_path = _dump_dir / f"utterance_{int(time.time())}_{len(data)}.raw"
-            dump_path.write_bytes(data)
 
             t1 = time.time()
             text = _transcribe(data, sample_rate, processor, model)

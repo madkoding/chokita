@@ -18,17 +18,16 @@ class Settings:
 
     asr_model: str = os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B-hf")
     sample_rate_hz: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
-    audio_chunk_size: int = int(os.getenv("AUDIO_CHUNK_SIZE", "4000"))
-    stt_retry_delay_seconds: float = float(os.getenv("STT_RETRY_DELAY_SECONDS", "1.5"))
-    wake_command_timeout_seconds: float = float(os.getenv("WAKE_COMMAND_TIMEOUT_SECONDS", "12.0"))
 
-    web_host: str = os.getenv("WEB_HOST", "0.0.0.0")
+    # ponytail: web_host default 127.0.0.1. WAN exposure = decisión del operador.
+    web_host: str = os.getenv("WEB_HOST", "127.0.0.1")
     web_port: int = int(os.getenv("WEB_PORT", "8080"))
+    # ponytail: token simple para WS; sin token = warning. JWT sería over-engineering.
+    ws_token: str = os.getenv("CHOKITA_WS_TOKEN", "")
 
     piper_model_path: Path = Path(os.getenv("PIPER_MODEL_PATH", "models/es_ES-sharvard-medium.onnx"))
     _piper_speaker_val = os.getenv("PIPER_SPEAKER", "1")
     piper_speaker: int | None = int(_piper_speaker_val) if _piper_speaker_val else None
-    playback_command: str = os.getenv("PLAYBACK_COMMAND", "auto")
     tts_fallback_stdout: bool = os.getenv("TTS_FALLBACK_STDOUT", "1") in ("1", "true", "yes")
 
     shutdown_join_timeout_seconds: float = float(os.getenv("SHUTDOWN_JOIN_TIMEOUT_SECONDS", "2"))

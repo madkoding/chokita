@@ -40,21 +40,17 @@ class SleepThread(threading.Thread):
         self.ui_queue = ui_queue
 
     def run(self) -> None:
+        # ponytail: wait corto + recheck en cada iteración. un wait largo no
+        # aborta por actividad; el recheck continuo cubre el caso "user spoke
+        # durante el wait largo".
         while not self.stop_event.is_set():
-            if self._last_activity() < SETTINGS.rem_idle_threshold_seconds:
-                if self.stop_event.wait(timeout=SETTINGS.rem_idle_threshold_seconds):
-                    break
-                continue
+            if self._last_activity() >= SETTINGS.rem_idle_threshold_seconds:
+                try:
+                    self._dream_once()
+                except Exception:
+                    LOGGER.exception("REM sleep failed")
             if self.stop_event.wait(timeout=SETTINGS.rem_raptor_interval_seconds):
                 break
-            if self.stop_event.is_set():
-                break
-            if self._last_activity() < SETTINGS.rem_idle_threshold_seconds:
-                continue
-            try:
-                self._dream_once()
-            except Exception:
-                LOGGER.exception("REM sleep failed")
 
     def _dream_once(self) -> None:
         self.ui_queue.put({"type": "state", "state": "SLEEPING", "message": "Zzz... reindexando el alma (RAPTOR)"})

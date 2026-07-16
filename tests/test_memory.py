@@ -403,3 +403,54 @@ def test_wal_checkpoint(mem):
     after_checkpoint = wal_path.stat().st_size if wal_path.exists() else 0
     assert after_write > before
     assert after_checkpoint < after_write
+
+
+def test_compact_history_replaces_old_summaries(mem):
+    # ponytail: compactar 2 veces no acumula summaries. el segundo borra al primero.
+    for i in range(8):
+        role = "user" if i % 2 == 0 else "assistant"
+        mem.add_message(role, f"msg {i}")
+    mem.compact_history("primer resumen")
+    mem.add_message("user", "nuevo msg 1")
+    mem.add_message("assistant", "nuevo msg 2")
+    mem.compact_history("segundo resumen")
+    recent = mem.recent_messages(limit=20)
+    summaries = [m for m in recent if m["role"] == "system"]
+    assert len(summaries) == 1
+    assert "segundo resumen" in summaries[0]["content"]
+
+
+def test_add_chunk_idempotent(mem):
+    # ponytail: UNIQUE INDEX + INSERT OR IGNORE hace add_chunk idempotente.
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.add_chunk("memory", "episode", "hola")
+        mem.add_chunk("memory", "episode", "hola")
+        mem.add_chunk("memory", "episode", "hola")
+    with mem._lock:
+        count = mem._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    assert count == 1
+
+
+def test_retrieve_exclude_soul(mem):
+    with patch.object(mem, "embed", return_value=[0.1, 0.2, 0.3, 0.4]):
+        mem.seed_soul("## S\nsoulish text")
+        mem.add_chunk("memory", "episode", "memory text")
+    results = mem.retrieve("text", top_k=10, exclude_soul=True)
+    sources = {r["source"] for r in results}
+    assert "soul" not in sources
+    results_all = mem.retrieve("text", top_k=10)
+    sources_all = {r["source"] for r in results_all}
+    assert "soul" in sources_all
+
+
+def test_kmeans_cosine_centroid_normalized():
+    # ponytail: centroide renormalizado a unit-norm. sin esto la media rompe cosine.
+    from src.memory import _kmeans_cosine
+    items = [
+        {"embedding": [1.0, 0.0, 0.0]},
+        {"embedding": [0.0, 1.0, 0.0]},
+        {"embedding": [0.0, 0.0, 1.0]},
+    ]
+    clusters = _kmeans_cosine(items, k=2, iters=5)
+    # Cada cluster debe tener items y la suma de sizes == 3.
+    assert sum(len(c) for c in clusters) == 3

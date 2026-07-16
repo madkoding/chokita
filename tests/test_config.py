@@ -13,7 +13,6 @@ def test_defaults():
     assert SETTINGS.context_window_tokens == 262144
     assert SETTINGS.compact_threshold == 0.80
     assert SETTINGS.tts_fallback_stdout is True
-    assert SETTINGS.playback_command == "auto"
 
 
 def test_env_override(monkeypatch):
@@ -21,7 +20,6 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("OLLAMA_MODEL", "llama3")
     monkeypatch.setenv("RAG_TOP_K", "3")
     monkeypatch.setenv("TTS_FALLBACK_STDOUT", "0")
-    monkeypatch.setenv("PLAYBACK_COMMAND", "ffplay")
     import importlib
 
     import src.config
@@ -31,4 +29,3 @@ def test_env_override(monkeypatch):
     assert s.ollama_model == "llama3"
     assert s.rag_top_k == 3
     assert s.tts_fallback_stdout is False
-    assert s.playback_command == "ffplay"

@@ -21,16 +21,15 @@ Asistente de IA de escritorio para terminal, diseñado para correr en consola si
 
 ```text
 src/
-  main.py       <- loop principal + threads (soul, REM, assistant, STT)
-  ui.py         <- TUI con textual (FaceApp, KaomojiFace, StatusPill, TokenBar)
-  audio.py      <- STT (vosk + pyaudio), wake word parser
-  llm.py        <- cliente Ollama + tool loop + RAG + compactación
-  memory.py     <- SQLite + WAL + embeddings + RAPTOR
-  soul.py       <- reflexión idle (YO/SUPERYO/ELLO)
-  sleep.py      <- REM sleep (RAPTOR reindex)
-  tools.py      <- 6 tools sandboxeadas a CHOKITA_WORKDIR
-  tts.py        <- Piper TTS + playback (aplay/paplay/ffplay/powershell)
-  config.py     <- settings dataclass con defaults via env vars
+  web.py             <- FastAPI app + entrypoint (`uvicorn src.web:app`) + threads (assistant, soul, REM) + WS
+  stt_subprocess.py  <- STT (Qwen3-ASR) en subprocess, JSON-line protocol
+  llm.py             <- cliente Ollama + tool loop + RAG + compactación
+  memory.py          <- SQLite + WAL + embeddings + RAPTOR
+  soul.py            <- reflexión idle (YO/SUPERYO/ELLO)
+  sleep.py           <- REM sleep (RAPTOR reindex)
+  tools.py           <- 6 tools sandboxeadas a CHOKITA_WORKDIR (whitelist bash, deny write)
+  tts.py             <- Piper TTS subprocess
+  config.py          <- settings dataclass con defaults via env vars
 scripts/
   download_models.sh
 ```

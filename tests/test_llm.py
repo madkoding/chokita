@@ -1,7 +1,10 @@
 import json
+import threading
 import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.llm import OllamaClient, parse_model_line
 
@@ -551,6 +554,43 @@ def test_ndjson_stream_memory_persisted(mock_urlopen) -> None:
     out = client.chat("test")
     assert out == "ok"
     memory.add_chunk.assert_called_once_with("memory", "episode", "recordar esto")
+
+
+@patch("urllib.request.urlopen")
+def test_ndjson_stream_memory_escapes_html(mock_urlopen) -> None:
+    # ponytail: html.escape en memory chunks previene XSS via RAG poisoning.
+    client, memory = _make_client()
+    mock_urlopen.return_value = DummyResponse(
+        '{"type":"memory","content":"<script>alert(1)</script>"}\n{"type":"response","content":"ok"}'
+    )
+    out = client.chat("test")
+    assert out == "ok"
+    memory.add_chunk.assert_called_once_with("memory", "episode", "&lt;script&gt;alert(1)&lt;/script&gt;")
+
+
+@patch("urllib.request.urlopen")
+def test_abort_event_short_circuits_chat(mock_urlopen) -> None:
+    # ponytail: abort_event seteado -> chat retorna fallback sin llamar al LLM.
+    client, memory = _make_client()
+    abort = threading.Event()
+    abort.set()
+    client = type(client)(memory=memory, ui_queue=None, abort_event=abort)
+    out = client.chat("test")
+    assert "No pude contactar" in out
+    mock_urlopen.assert_not_called()
+
+
+@patch("urllib.request.urlopen")
+def test_abort_event_raises_in_raw_chat(mock_urlopen) -> None:
+    # ponytail: abort_event seteado ANTES de _raw_chat -> AbortedError, no llamada HTTP.
+    from src.llm import AbortedError
+    client, memory = _make_client()
+    abort = threading.Event()
+    abort.set()
+    client = type(client)(memory=memory, ui_queue=None, abort_event=abort)
+    with pytest.raises(AbortedError):
+        client._raw_chat([{"role": "user", "content": "x"}])
+    mock_urlopen.assert_not_called()
 
 
 @patch("urllib.request.urlopen")
