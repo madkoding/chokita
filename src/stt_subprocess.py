@@ -14,16 +14,13 @@ Emite eventos por stdout (JSON lines):
 from __future__ import annotations
 
 import base64
-import io
 import json
 import logging
 import os
 import re
 import sys
-import tempfile
 import time
 import unicodedata
-import wave
 from pathlib import Path
 from typing import Any
 
@@ -72,18 +69,10 @@ def _emit(event: dict) -> None:
 
 
 
-def _bytes_to_wav(raw_pcm: bytes, sample_rate: int) -> str:
-    """Convierte raw PCM int16 mono a un archivo WAV temporal."""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(raw_pcm)
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir="/tmp")
-    tmp.write(buf.getvalue())
-    tmp.close()
-    return tmp.name
+def _pcm_to_array(raw_pcm: bytes, sample_rate: int) -> tuple[numpy.ndarray, int]:
+    """Convierte raw PCM int16 mono directamente a array float32 normalizado."""
+    audio = numpy.frombuffer(raw_pcm, dtype=numpy.int16).astype(numpy.float32) / 32768.0
+    return audio, sample_rate
 
 
 def _read_msg() -> tuple[str | None, Any]:
@@ -124,49 +113,47 @@ def _process_cmd(msg: Any, muted: bool) -> tuple[bool, bool]:
     return False, muted
 
 
-def _wav_to_array(wav_path: str) -> tuple[numpy.ndarray, int]:
-    """Lee un WAV file y retorna (audio_array, sample_rate)."""
-    with wave.open(wav_path, "rb") as wf:
-        sr = wf.getframerate()
-        frames = wf.readframes(wf.getnframes())
-    audio = numpy.frombuffer(frames, dtype=numpy.int16).astype(numpy.float32) / 32768.0
-    return audio, sr
-
-
 def _transcribe(audio_buffer: bytes, sample_rate: int,
-                processor: Any, model: Any) -> str:
-    """Transcribe audio buffer con Qwen3-ASR. Retorna texto or ''."""
+                processor: Any, model: Any) -> tuple[str, dict[str, float]]:
+    """Transcribe audio buffer con Qwen3-ASR. Retorna (texto, timings)."""
     import torch
-    wav_path = _bytes_to_wav(audio_buffer, sample_rate)
-    try:
-        audio_array, sr = _wav_to_array(wav_path)
-        LOGGER.debug("audio: len=%d samples, max=%.4f, min=%.4f, mean_abs=%.4f",
-                     len(audio_array), audio_array.max(), audio_array.min(),
-                     numpy.abs(audio_array).mean())
-        inputs = processor.apply_transcription_request(
-            audio=audio_array, language="Spanish",
-        )
-        LOGGER.debug("input_features shape=%s", inputs["input_features"].shape)
-        LOGGER.debug("input_features_mask shape=%s", inputs.get("input_features_mask", "N/A"))
-        LOGGER.debug("input_ids decoded=%r", processor.decode(inputs["input_ids"][0]))
-        # Convert dtypes correctly
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
-        inputs["input_features"] = inputs["input_features"].to(dtype=model.dtype)
-        with torch.inference_mode():
-            output_ids = model.generate(**inputs, max_new_tokens=256)
-        LOGGER.debug("output_ids shape=%s", output_ids.shape)
-        gen = output_ids[:, inputs["input_ids"].shape[1]:]
-        LOGGER.debug("gen tokens=%s", gen[0].tolist())
-        raw = processor.decode(gen[0], skip_special_tokens=False)
-        LOGGER.debug("gen decoded=%r", raw)
-        result = processor.decode(gen, return_format="transcription_only")[0]
-        LOGGER.debug("decode result=%r", result)
-        return result
-    finally:
-        try:
-            os.unlink(wav_path)
-        except Exception:
-            pass
+    timings: dict[str, float] = {}
+    t0 = time.time()
+    audio_array, sr = _pcm_to_array(audio_buffer, sample_rate)
+    timings["pcm_convert"] = time.time() - t0
+    LOGGER.debug("audio: len=%d samples, max=%.4f, min=%.4f, mean_abs=%.4f",
+                 len(audio_array), audio_array.max(), audio_array.min(),
+                 numpy.abs(audio_array).mean())
+
+    t1 = time.time()
+    inputs = processor.apply_transcription_request(
+        audio=audio_array, language="Spanish",
+    )
+    timings["processor"] = time.time() - t1
+    LOGGER.debug("input_features shape=%s", inputs["input_features"].shape)
+    LOGGER.debug("input_features_mask shape=%s", inputs.get("input_features_mask", "N/A"))
+    LOGGER.debug("input_ids decoded=%r", processor.decode(inputs["input_ids"][0]))
+
+    t2 = time.time()
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    inputs["input_features"] = inputs["input_features"].to(dtype=model.dtype)
+    timings["to_device"] = time.time() - t2
+
+    t3 = time.time()
+    with torch.inference_mode():
+        output_ids = model.generate(**inputs, max_new_tokens=256)
+    timings["generate"] = time.time() - t3
+    LOGGER.debug("output_ids shape=%s", output_ids.shape)
+
+    t4 = time.time()
+    gen = output_ids[:, inputs["input_ids"].shape[1]:]
+    LOGGER.debug("gen tokens=%s", gen[0].tolist())
+    raw = processor.decode(gen[0], skip_special_tokens=False)
+    LOGGER.debug("gen decoded=%r", raw)
+    result = processor.decode(gen, return_format="transcription_only")[0]
+    timings["decode"] = time.time() - t4
+    LOGGER.debug("decode result=%r", result)
+    return result, timings
 
 
 def main() -> None:
@@ -215,9 +202,11 @@ def main() -> None:
             LOGGER.debug("utterance recibida: %d bytes", len(data))
 
             t1 = time.time()
-            text = _transcribe(data, sample_rate, processor, model)
+            text, timings = _transcribe(data, sample_rate, processor, model)
             elapsed = time.time() - t1
-            LOGGER.info("transcrito en %.1fs: %s", elapsed, text)
+            LOGGER.info("transcrito en %.2fs (pcm=%.3fs processor=%.3fs to_device=%.3fs generate=%.3fs decode=%.3fs): %r",
+                        elapsed, timings["pcm_convert"], timings["processor"],
+                        timings["to_device"], timings["generate"], timings["decode"], text)
 
             if not text:
                 _emit({"event": "not_recognized"})

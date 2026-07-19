@@ -16,7 +16,7 @@ class Settings:
     )
     ollama_keep_alive: int = int(os.getenv("OLLAMA_KEEP_ALIVE", "-1"))
 
-    asr_model: str = os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-1.7B-hf")
+    asr_model: str = os.getenv("ASR_MODEL", "Qwen/Qwen3-ASR-0.6B-hf")
     sample_rate_hz: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
 
     # ponytail: web_host default 127.0.0.1. WAN exposure = decisión del operador.
